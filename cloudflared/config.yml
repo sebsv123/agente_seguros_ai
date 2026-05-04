@@ -1,0 +1,10 @@
+tunnel: 89759d33-8022-4212-894a-a41cb1f8fdfd
+credentials-file: /etc/cloudflared/creds.json
+
+ingress:
+  - hostname: n8n.valentinproteccionintegral.com
+    service: http://agente_n8n:5678
+    originRequest:
+      httpHostHeader: n8n.valentinproteccionintegral.com
+      noTLSVerify: true
+  - service: http_status:404

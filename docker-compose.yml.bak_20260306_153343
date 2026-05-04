@@ -1,0 +1,54 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: agente_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agente
+      POSTGRES_PASSWORD: agente_pw
+      POSTGRES_DB: agente
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: agente_n8n
+    restart: unless-stopped
+    depends_on:
+      - db
+    ports:
+      - "5678:5678"
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: db
+      DB_POSTGRESDB_PORT: "5432"
+      DB_POSTGRESDB_DATABASE: agente
+      DB_POSTGRESDB_USER: agente
+      DB_POSTGRESDB_PASSWORD: agente_pw
+
+      N8N_HOST: n8n.valentinproteccionintegral.com
+      N8N_PROTOCOL: https
+      N8N_PORT: "5678"
+      N8N_EDITOR_BASE_URL: https://n8n.valentinproteccionintegral.com
+      WEBHOOK_URL: https://n8n.valentinproteccionintegral.com
+
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_BASIC_AUTH_ACTIVE: "false"
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: agente_cloudflared
+    restart: unless-stopped
+    depends_on:
+      - n8n
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    command: tunnel --no-autoupdate --protocol http2 run
+
+volumes:
+  n8n_data:
+  postgres_data:
