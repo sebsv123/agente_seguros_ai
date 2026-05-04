@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+env/
+venv/
+ENV/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Data directories
+data/
+data_*/
+
+# Docker
+.docker/
+
+# Backup files
+*.bak
+*.bak_*
+*.tgz
+
+# Environment variables
+.env
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large ML libraries
+*.dll
+*.so
+*.dylib
