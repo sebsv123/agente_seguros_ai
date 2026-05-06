@@ -1,0 +1,110 @@
+{
+  "metadata": {
+    "generado": "extract_product_rules.py",
+    "total_pdfs": 0,
+    "total_productos": 9,
+    "productos_con_pdf": [],
+    "nota": "Playbooks genericos - anade PDFs en docs/productos/<categoria>/ para extraer contenido real"
+  },
+  "productos": [
+    {
+      "producto": "salud",
+      "source_file": "generico_salud.txt",
+      "resumen_comercial": "Seguro de salud con diversas coberturas adaptadas a las necesidades del cliente.",
+      "perfil_objetivo": [],
+      "preguntas_iniciales": [],
+      "datos_minimos": [],
+      "objeciones_frecuentes": [],
+      "limites": [],
+      "cuando_derivar_humano": []
+    },
+    {
+      "producto": "vida",
+      "source_file": "generico_vida.txt",
+      "resumen_comercial": "Seguro de vida con diversas coberturas adaptadas a las necesidades del cliente.",
+      "perfil_objetivo": [],
+      "preguntas_iniciales": [],
+      "datos_minimos": [],
+      "objeciones_frecuentes": [],
+      "limites": [],
+      "cuando_derivar_humano": []
+    },
+    {
+      "producto": "dental",
+      "source_file": "generico_dental.txt",
+      "resumen_comercial": "Seguro de dental con diversas coberturas adaptadas a las necesidades del cliente.",
+      "perfil_objetivo": [],
+      "preguntas_iniciales": [],
+      "datos_minimos": [],
+      "objeciones_frecuentes": [],
+      "limites": [],
+      "cuando_derivar_humano": []
+    },
+    {
+      "producto": "mascotas",
+      "source_file": "generico_mascotas.txt",
+      "resumen_comercial": "Seguro de mascotas con diversas coberturas adaptadas a las necesidades del cliente.",
+      "perfil_objetivo": [],
+      "preguntas_iniciales": [],
+      "datos_minimos": [],
+      "objeciones_frecuentes": [],
+      "limites": [],
+      "cuando_derivar_humano": []
+    },
+    {
+      "producto": "decesos",
+      "source_file": "generico_decesos.txt",
+      "resumen_comercial": "Seguro de decesos con diversas coberturas adaptadas a las necesidades del cliente.",
+      "perfil_objetivo": [],
+      "preguntas_iniciales": [],
+      "datos_minimos": [],
+      "objeciones_frecuentes": [],
+      "limites": [],
+      "cuando_derivar_humano": []
+    },
+    {
+      "producto": "autonomos",
+      "source_file": "generico_autonomos.txt",
+      "resumen_comercial": "Seguro de autonomos con diversas coberturas adaptadas a las necesidades del cliente.",
+      "perfil_objetivo": [],
+      "preguntas_iniciales": [],
+      "datos_minimos": [],
+      "objeciones_frecuentes": [],
+      "limites": [],
+      "cuando_derivar_humano": []
+    },
+    {
+      "producto": "extranjeria",
+      "source_file": "generico_extranjeria.txt",
+      "resumen_comercial": "Seguro de extranjeria con diversas coberturas adaptadas a las necesidades del cliente.",
+      "perfil_objetivo": [],
+      "preguntas_iniciales": [],
+      "datos_minimos": [],
+      "objeciones_frecuentes": [],
+      "limites": [],
+      "cuando_derivar_humano": []
+    },
+    {
+      "producto": "accidentes",
+      "source_file": "generico_accidentes.txt",
+      "resumen_comercial": "Seguro de accidentes con diversas coberturas adaptadas a las necesidades del cliente.",
+      "perfil_objetivo": [],
+      "preguntas_iniciales": [],
+      "datos_minimos": [],
+      "objeciones_frecuentes": [],
+      "limites": [],
+      "cuando_derivar_humano": []
+    },
+    {
+      "producto": "juridica",
+      "source_file": "generico_juridica.txt",
+      "resumen_comercial": "Seguro de juridica con diversas coberturas adaptadas a las necesidades del cliente.",
+      "perfil_objetivo": [],
+      "preguntas_iniciales": [],
+      "datos_minimos": [],
+      "objeciones_frecuentes": [],
+      "limites": [],
+      "cuando_derivar_humano": []
+    }
+  ]
+}
