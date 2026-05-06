@@ -87,7 +87,7 @@ N8N_WEBHOOK_URL         = os.getenv("N8N_WEBHOOK_URL", "")
 N8N_TIMEOUT             = int(os.getenv("N8N_TIMEOUT", "8"))
 GROQ_API_KEY            = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL              = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-WA_TOKEN                = os.getenv("WA_TOKEN", "EAANl08hUhowBQytGO50DXhcWhDvfzwFLdkMJoM8Az7kqb8wuhV0nbYw0ZC9qW27xEM9dIRfPZAwczWbfP6XXo3MdgKb21vhWqJx5KryojUXOyzZCErG3fWFBKVKjSnAErJZCWeWZAOLBfqyiIyGzrBZB5rACCkWOZCjP3EcyZCmgUln8ZBQnx5OHLRPIlTc2kI46TKKNb7vEUvz7C3X6ArZBmunOT5iu87UjZCGEZACFKCe7iFfbd36M0AoRUZCAMH1HSIv89mGnp5iQ5lfKOxtW4uQZDZD")
+WA_TOKEN                = os.getenv("WA_TOKEN", "")
 TESSERACT_PATH          = r"C:\Users\Sebitas\Downloads\tesseract-5.5.2\tesseract-5.5.2\tesseract.exe"
 
 # KB / RAG
