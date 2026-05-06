@@ -1,110 +1,349 @@
 {
   "metadata": {
     "generado": "extract_product_rules.py",
-    "total_pdfs": 0,
+    "total_pdfs": 13,
     "total_productos": 9,
-    "productos_con_pdf": [],
-    "nota": "Playbooks genericos - anade PDFs en docs/productos/<categoria>/ para extraer contenido real"
+    "productos_con_pdf": [
+      "autonomos",
+      "salud",
+      "dental",
+      "extranjeria"
+    ]
   },
   "productos": [
     {
+      "producto": "autonomos",
+      "source_file": "COMPROMISOS ADESLAS PYME TOTAL.pdf",
+      "resumen_comercial": "Seguro de autonomos con diversas coberturas adaptadas a las necesidades del cliente.",
+      "perfil_objetivo": [
+        "Autónomos y profesionales liberales",
+        "Pequeños empresarios"
+      ],
+      "preguntas_iniciales": [
+        "¿De qué sector es tu actividad profesional?",
+        "¿Tienes empleados a tu cargo?",
+        "¿Qué tipo de cobertura buscas? ¿Baja laboral, responsabilidad civil, accidentes?",
+        "¿Actualmente tienes alguna mutua o seguro profesional?"
+      ],
+      "datos_minimos": [
+        "Actividad profesional (epígrafe IAE)",
+        "Edad",
+        "Facturación anual aproximada",
+        "¿Tiene empleados?"
+      ],
+      "objeciones_frecuentes": [
+        "Ya cotizo bastante a la seguridad social",
+        "Es un gasto más que no me puedo permitir",
+        "Nunca he tenido un problema",
+        "Ya tengo un seguro a través de mi asociación"
+      ],
+      "limites": [
+        "No prometer que cubre todas las actividades profesionales",
+        "No dar cifras exactas sin conocer el epígrafe IAE y facturación",
+        "No asegurar que la cobertura de baja laboral se activa desde el día 1"
+      ],
+      "cuando_derivar_humano": [
+        "El cliente tiene una actividad profesional de alto riesgo no tipificada",
+        "El cliente factura más de 300.000€ anuales",
+        "El cliente quiere un seguro a medida para su sector específico"
+      ]
+    },
+    {
       "producto": "salud",
-      "source_file": "generico_salud.txt",
+      "source_file": "INFORMACION CHEQUEO MEDICO PYME TOTAL ADESLAS.pdf",
       "resumen_comercial": "Seguro de salud con diversas coberturas adaptadas a las necesidades del cliente.",
-      "perfil_objetivo": [],
-      "preguntas_iniciales": [],
-      "datos_minimos": [],
-      "objeciones_frecuentes": [],
-      "limites": [],
-      "cuando_derivar_humano": []
+      "perfil_objetivo": [
+        "Personas que buscan un seguro médico privado",
+        "Familias que quieren evitar listas de espera",
+        "Autónomos sin acceso a mutua"
+      ],
+      "preguntas_iniciales": [
+        "¿Para quién buscas el seguro? ¿Para ti, para tu familia o para un familiar mayor?",
+        "¿Tienes alguna enfermedad o condición preexistente que debamos tener en cuenta?",
+        "¿Prefieres un seguro con copagos (más barato) o sin copagos (más completo)?",
+        "¿Necesitas cobertura dental incluida o solo médico?",
+        "¿Qué tipo de especialista sueles visitar con más frecuencia?"
+      ],
+      "datos_minimos": [
+        "Edad del asegurado",
+        "Código postal",
+        "Sexo",
+        "¿Tiene preexistencias?"
+      ],
+      "objeciones_frecuentes": [
+        "Ya tengo seguridad social",
+        "Es muy caro para lo que cubre",
+        "Tengo preexistencias y no me van a cubrir",
+        "Prefiero esperar en la pública antes que pagar",
+        "Ya tengo seguro médico en el trabajo"
+      ],
+      "limites": [
+        "No prometer que todas las preexistencias estarán cubiertas (depende del asegurador)",
+        "No garantizar tiempos de espera concretos para cirugías",
+        "No comparar directamente con otras aseguradoras mencionando nombres",
+        "No asegurar que un tratamiento concreto estará cubierto sin verificarlo antes"
+      ],
+      "cuando_derivar_humano": [
+        "El cliente tiene enfermedades preexistentes complejas o múltiples",
+        "El cliente pide comparativa detallada entre varias aseguradoras",
+        "El cliente quiere un seguro para un colectivo o empresa",
+        "El cliente solicita información sobre hospitales o cuadros médicos específicos",
+        "El cliente quiere negociar condiciones especiales"
+      ]
+    },
+    {
+      "producto": "dental",
+      "source_file": "S.RE.AD.1716.06 Dental Pymes Total 2026.pdf",
+      "resumen_comercial": "Seguro de dental con diversas coberturas adaptadas a las necesidades del cliente.",
+      "perfil_objetivo": [
+        "Personas que necesitan revisiones periódicas",
+        "Familias con niños",
+        "Personas sin cobertura dental en su seguro médico"
+      ],
+      "preguntas_iniciales": [
+        "¿Hace cuánto no te haces una revisión dental?",
+        "¿Necesitas un tratamiento concreto (ortodoncia, implantes) o solo revisiones?",
+        "¿Buscas seguro solo para ti o para toda la familia?",
+        "¿Tienes algún problema dental actual que necesites tratar?"
+      ],
+      "datos_minimos": [
+        "Edad del asegurado",
+        "Código postal",
+        "¿Necesita tratamiento concreto?"
+      ],
+      "objeciones_frecuentes": [
+        "Me sale más barato pagar las visitas por separado",
+        "Solo voy al dentista una vez al año",
+        "Mi seguro médico ya cubre dental básico"
+      ],
+      "limites": [
+        "No prometer que todos los tratamientos estético-dentales están cubiertos",
+        "No dar presupuestos exactos de tratamientos sin ver la póliza concreta",
+        "No asegurar tiempos de espera para citas"
+      ],
+      "cuando_derivar_humano": [
+        "El cliente necesita un presupuesto detallado para un tratamiento complejo",
+        "El cliente tiene múltiples tratamientos pendientes",
+        "El cliente quiere un seguro dental para toda una empresa"
+      ]
+    },
+    {
+      "producto": "extranjeria",
+      "source_file": "666028759-194-1  736_Condiciones Generales Adeslas Asistencia en el Extranjero con Repatriacion S.RE.1511.01 19.pdf",
+      "resumen_comercial": "Seguro de extranjeria con diversas coberturas adaptadas a las necesidades del cliente.",
+      "perfil_objetivo": [
+        "Extranjeros residentes en España sin acceso a sanidad pública",
+        "Estudiantes internacionales"
+      ],
+      "preguntas_iniciales": [
+        "¿Cuál es tu país de origen y cuánto tiempo llevas en España?",
+        "¿Tienes tarjeta sanitaria europea o acceso a la sanidad pública?",
+        "¿Necesitas el seguro para trámites de residencia o por tranquilidad personal?",
+        "¿Prefieres atención en español, inglés u otro idioma?"
+      ],
+      "datos_minimos": [
+        "Nacionalidad",
+        "Edad",
+        "¿Tiene NIE o pasaporte?",
+        "¿Necesita el seguro para el permiso de residencia?"
+      ],
+      "objeciones_frecuentes": [
+        "Voy a volver a mi país en unos meses",
+        "La sanidad pública es gratuita para todos",
+        "Mi seguro de viaje me cubre"
+      ],
+      "limites": [
+        "No prometer que cubre todas las nacionalidades",
+        "No asegurar que sirve para todos los trámites de residencia",
+        "No garantizar atención en todos los idiomas"
+      ],
+      "cuando_derivar_humano": [
+        "El cliente no tiene NIE ni documentación española",
+        "El cliente tiene una enfermedad preexistente grave",
+        "El cliente necesita el seguro para un visado específico no estándar"
+      ]
     },
     {
       "producto": "vida",
       "source_file": "generico_vida.txt",
       "resumen_comercial": "Seguro de vida con diversas coberturas adaptadas a las necesidades del cliente.",
-      "perfil_objetivo": [],
-      "preguntas_iniciales": [],
-      "datos_minimos": [],
-      "objeciones_frecuentes": [],
-      "limites": [],
-      "cuando_derivar_humano": []
-    },
-    {
-      "producto": "dental",
-      "source_file": "generico_dental.txt",
-      "resumen_comercial": "Seguro de dental con diversas coberturas adaptadas a las necesidades del cliente.",
-      "perfil_objetivo": [],
-      "preguntas_iniciales": [],
-      "datos_minimos": [],
-      "objeciones_frecuentes": [],
-      "limites": [],
-      "cuando_derivar_humano": []
+      "perfil_objetivo": [
+        "Personas con cargas familiares",
+        "Titulares de hipoteca",
+        "Autónomos que quieren proteger su negocio"
+      ],
+      "preguntas_iniciales": [
+        "¿Tienes alguna hipoteca o préstamo que quieras proteger?",
+        "¿Tienes personas a tu cargo (hijos, cónyuge, padres)?",
+        "¿Qué capital te gustaría dejar asegurado?",
+        "¿Eres autónomo o trabajas por cuenta ajena?"
+      ],
+      "datos_minimos": [
+        "Edad del asegurado",
+        "Capital asegurado deseado",
+        "¿Tiene hipoteca?",
+        "Profesión"
+      ],
+      "objeciones_frecuentes": [
+        "Soy joven y no lo necesito",
+        "Es caro y no me va a pasar nada",
+        "Ya tengo uno con la hipoteca",
+        "Prefiero ahorrar ese dinero"
+      ],
+      "limites": [
+        "No prometer que la cobertura por suicidio está incluida (tiene carencia legal de 1 año)",
+        "No dar cifras exactas de prima sin tener todos los datos",
+        "No asegurar que cubre cualquier profesión de riesgo"
+      ],
+      "cuando_derivar_humano": [
+        "El cliente tiene más de 65 años",
+        "El cliente tiene enfermedades graves diagnosticadas",
+        "El cliente quiere un capital asegurado superior a 300.000€",
+        "El cliente tiene profesiones de alto riesgo no cubiertas"
+      ]
     },
     {
       "producto": "mascotas",
       "source_file": "generico_mascotas.txt",
       "resumen_comercial": "Seguro de mascotas con diversas coberturas adaptadas a las necesidades del cliente.",
-      "perfil_objetivo": [],
-      "preguntas_iniciales": [],
-      "datos_minimos": [],
-      "objeciones_frecuentes": [],
-      "limites": [],
-      "cuando_derivar_humano": []
+      "perfil_objetivo": [
+        "Dueños de perros y gatos",
+        "Personas que quieren evitar gastos veterinarios imprevistos"
+      ],
+      "preguntas_iniciales": [
+        "¿Qué tipo de mascota tienes? ¿Perro, gato u otro?",
+        "¿Tu mascota tiene alguna enfermedad crónica o condición preexistente?",
+        "¿Buscas solo accidentes o también quieres cobertura de enfermedad y vacunación?",
+        "¿Tu mascota está identificada con microchip?"
+      ],
+      "datos_minimos": [
+        "Tipo de mascota (perro/gato/otro)",
+        "Edad de la mascota",
+        "Raza",
+        "¿Tiene microchip?"
+      ],
+      "objeciones_frecuentes": [
+        "Mi mascota está sana, no lo necesita",
+        "Es caro para un animal",
+        "Ya tengo un fondo de ahorro para emergencias"
+      ],
+      "limites": [
+        "No prometer que cubre enfermedades preexistentes",
+        "No asegurar que todas las razas están aceptadas",
+        "No garantizar que cubre tratamientos estéticos"
+      ],
+      "cuando_derivar_humano": [
+        "La mascota tiene una enfermedad crónica o condición preexistente",
+        "La mascota es de una raza considerada peligrosa (PPP)",
+        "El cliente tiene más de 3 mascotas"
+      ]
     },
     {
       "producto": "decesos",
       "source_file": "generico_decesos.txt",
       "resumen_comercial": "Seguro de decesos con diversas coberturas adaptadas a las necesidades del cliente.",
-      "perfil_objetivo": [],
-      "preguntas_iniciales": [],
-      "datos_minimos": [],
-      "objeciones_frecuentes": [],
-      "limites": [],
-      "cuando_derivar_humano": []
-    },
-    {
-      "producto": "autonomos",
-      "source_file": "generico_autonomos.txt",
-      "resumen_comercial": "Seguro de autonomos con diversas coberturas adaptadas a las necesidades del cliente.",
-      "perfil_objetivo": [],
-      "preguntas_iniciales": [],
-      "datos_minimos": [],
-      "objeciones_frecuentes": [],
-      "limites": [],
-      "cuando_derivar_humano": []
-    },
-    {
-      "producto": "extranjeria",
-      "source_file": "generico_extranjeria.txt",
-      "resumen_comercial": "Seguro de extranjeria con diversas coberturas adaptadas a las necesidades del cliente.",
-      "perfil_objetivo": [],
-      "preguntas_iniciales": [],
-      "datos_minimos": [],
-      "objeciones_frecuentes": [],
-      "limites": [],
-      "cuando_derivar_humano": []
+      "perfil_objetivo": [
+        "Personas mayores que quieren dejar todo organizado",
+        "Familias que buscan aliviar la carga económica a sus seres queridos"
+      ],
+      "preguntas_iniciales": [
+        "¿Buscas un seguro de decesos para ti o para un familiar?",
+        "¿Te gustaría incluir cobertura para toda la familia?",
+        "¿Tienes preferencia por alguna funeraria o servicio concreto?",
+        "¿Quieres contratar el seguro ahora o es para planificar a futuro?"
+      ],
+      "datos_minimos": [
+        "Edad del asegurado principal",
+        "Número de personas a incluir",
+        "Código postal"
+      ],
+      "objeciones_frecuentes": [
+        "Es un tema del que no quiero hablar",
+        "Ya tengo uno contratado",
+        "Mis hijos se harán cargo",
+        "Es dinero tirado, no me lo voy a gastar yo"
+      ],
+      "limites": [
+        "No prometer servicios funerarios específicos sin verificarlo en la póliza",
+        "No dar precios exactos sin tener todos los datos del tomador",
+        "No asegurar que cubre fallecimiento en el extranjero sin verificarlo"
+      ],
+      "cuando_derivar_humano": [
+        "El cliente quiere personalizar el servicio funerario al detalle",
+        "El cliente tiene más de 80 años",
+        "El cliente quiere incluir coberturas muy específicas"
+      ]
     },
     {
       "producto": "accidentes",
       "source_file": "generico_accidentes.txt",
       "resumen_comercial": "Seguro de accidentes con diversas coberturas adaptadas a las necesidades del cliente.",
-      "perfil_objetivo": [],
-      "preguntas_iniciales": [],
-      "datos_minimos": [],
-      "objeciones_frecuentes": [],
-      "limites": [],
-      "cuando_derivar_humano": []
+      "perfil_objetivo": [
+        "Personas con trabajos de riesgo",
+        "Deportistas y aficionados a actividades al aire libre"
+      ],
+      "preguntas_iniciales": [
+        "¿Qué tipo de actividad o trabajo realizas?",
+        "¿Practicas algún deporte de riesgo habitualmente?",
+        "¿Buscas cobertura para accidentes laborales o también para tu tiempo libre?",
+        "¿Quieres incluir cobertura para tu familia?"
+      ],
+      "datos_minimos": [
+        "Edad",
+        "Profesión o actividad",
+        "Capital asegurado deseado"
+      ],
+      "objeciones_frecuentes": [
+        "A mí no me va a pasar nada",
+        "Mi trabajo no es de riesgo",
+        "Ya tengo cobertura por accidentes laborales"
+      ],
+      "limites": [
+        "No prometer que cubre todos los deportes de riesgo",
+        "No asegurar que la cobertura es mundial sin verificarlo",
+        "No dar capitales exactos sin conocer la actividad"
+      ],
+      "cuando_derivar_humano": [
+        "El cliente practica deportes de riesgo extremo no cubiertos",
+        "El cliente quiere un capital asegurado muy elevado",
+        "El cliente ha tenido múltiples siniestros previos"
+      ]
     },
     {
       "producto": "juridica",
       "source_file": "generico_juridica.txt",
       "resumen_comercial": "Seguro de juridica con diversas coberturas adaptadas a las necesidades del cliente.",
-      "perfil_objetivo": [],
-      "preguntas_iniciales": [],
-      "datos_minimos": [],
-      "objeciones_frecuentes": [],
-      "limites": [],
-      "cuando_derivar_humano": []
+      "perfil_objetivo": [
+        "Autónomos y empresas",
+        "Propietarios de viviendas",
+        "Conductores"
+      ],
+      "preguntas_iniciales": [
+        "¿Necesitas defensa jurídica para ti, tu negocio o tu hogar?",
+        "¿Qué tipo de conflicto legal te preocupa más?",
+        "¿Eres autónomo o empresa?",
+        "¿Tienes ya algún abogado de confianza o prefieres que te asignemos uno?"
+      ],
+      "datos_minimos": [
+        "Tipo de defensa (hogar/negocio/personal)",
+        "Edad",
+        "¿Tiene algún conflicto legal actual?"
+      ],
+      "objeciones_frecuentes": [
+        "Nunca he tenido problemas legales",
+        "Es caro para lo que ofrece",
+        "Si tengo un problema, busco un abogado entonces"
+      ],
+      "limites": [
+        "No prometer que cubre cualquier tipo de conflicto legal",
+        "No asegurar resultados concretos en juicios",
+        "No garantizar que cubre litigios ya iniciados"
+      ],
+      "cuando_derivar_humano": [
+        "El cliente ya tiene un litigio en curso",
+        "El cliente necesita defensa penal",
+        "El cliente es una empresa con necesidades legales complejas"
+      ]
     }
   ]
 }

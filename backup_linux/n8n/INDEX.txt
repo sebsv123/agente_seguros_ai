@@ -1,0 +1,77 @@
+=== CONTENIDO FINAL DEL BACKUP ===
+
+Generado: 2026-05-06
+Origen: C:\Users\Sebitas\agente-seguros
+
+--- ESTRUCTURA DE DIRECTORIOS ---
+
+n8n/
+  config/
+    .env (1,559 bytes)
+    cloudflared.yml (115 bytes)
+    docker-compose.yml (2,035 bytes)
+    cloudflared/
+      config.yml (323 bytes)
+    nodes/
+      package.json (113 bytes)
+      node_modules/
+        n8n-nodes-upload-post/
+          LICENSE.md (1,043 bytes)
+          README.md (13,829 bytes)
+          index.js (0 bytes)
+          package.json (1,189 bytes)
+          dist/
+            package.json (1,728 bytes)
+            tsconfig.tsbuildinfo (33,768 bytes)
+            credentials/
+              UploadPost.svg (236,016 bytes)
+              UploadPostApi.credentials.d.ts (402 bytes)
+              UploadPostApi.credentials.js (1,441 bytes)
+              UploadPostApi.credentials.js.map (806 bytes)
+            nodes/
+              UploadPost/
+                UploadPost.node.d.ts (828 bytes)
+                UploadPost.node.js (137,211 bytes)
+                UploadPost.node.js.map (87,620 bytes)
+                uploadpost.svg (236,016 bytes)
+  credentials/
+  database/
+    database.sqlite (1,585,152 bytes)
+    n8n_data_backup.tgz (1,654,846 bytes)
+    n8n_workflows_backup.zip (817,080 bytes)
+    backups/
+      agente_20260306_160000.sql (293,218 bytes)
+      agente_20260306_160318.sql (293,218 bytes)
+  docs/
+    README.md (8,181 bytes)
+    extract_n8n.py (1,469 bytes)
+  workflows/
+
+--- DETALLES DE CADA ARCHIVO ---
+
+  config\.env: 1,559 bytes
+  config\cloudflared.yml: 115 bytes
+  config\docker-compose.yml: 2,035 bytes
+  config\cloudflared\config.yml: 323 bytes
+  config\nodes\package.json: 113 bytes
+  config\nodes\node_modules\n8n-nodes-upload-post\LICENSE.md: 1,043 bytes
+  config\nodes\node_modules\n8n-nodes-upload-post\README.md: 13,829 bytes
+  config\nodes\node_modules\n8n-nodes-upload-post\index.js: 0 bytes
+  config\nodes\node_modules\n8n-nodes-upload-post\package.json: 1,189 bytes
+  config\nodes\node_modules\n8n-nodes-upload-post\dist\package.json: 1,728 bytes
+  config\nodes\node_modules\n8n-nodes-upload-post\dist\tsconfig.tsbuildinfo: 33,768 bytes
+  config\nodes\node_modules\n8n-nodes-upload-post\dist\credentials\UploadPost.svg: 236,016 bytes
+  config\nodes\node_modules\n8n-nodes-upload-post\dist\credentials\UploadPostApi.credentials.d.ts: 402 bytes
+  config\nodes\node_modules\n8n-nodes-upload-post\dist\credentials\UploadPostApi.credentials.js: 1,441 bytes
+  config\nodes\node_modules\n8n-nodes-upload-post\dist\credentials\UploadPostApi.credentials.js.map: 806 bytes
+  config\nodes\node_modules\n8n-nodes-upload-post\dist\nodes\UploadPost\UploadPost.node.d.ts: 828 bytes
+  config\nodes\node_modules\n8n-nodes-upload-post\dist\nodes\UploadPost\UploadPost.node.js: 137,211 bytes
+  config\nodes\node_modules\n8n-nodes-upload-post\dist\nodes\UploadPost\UploadPost.node.js.map: 87,620 bytes
+  config\nodes\node_modules\n8n-nodes-upload-post\dist\nodes\UploadPost\uploadpost.svg: 236,016 bytes
+  database\database.sqlite: 1,585,152 bytes
+  database\n8n_data_backup.tgz: 1,654,846 bytes
+  database\n8n_workflows_backup.zip: 817,080 bytes
+  database\backups\agente_20260306_160000.sql: 293,218 bytes
+  database\backups\agente_20260306_160318.sql: 293,218 bytes
+  docs\README.md: 8,181 bytes
+  docs\extract_n8n.py: 1,469 bytes
