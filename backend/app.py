@@ -38,7 +38,7 @@ from urllib.request import Request as URequest, urlopen
 import psycopg
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request as FastAPIRequest
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
 
 load_dotenv()
@@ -88,6 +88,8 @@ N8N_TIMEOUT             = int(os.getenv("N8N_TIMEOUT", "8"))
 GROQ_API_KEY            = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL              = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 WA_TOKEN                = os.getenv("WA_TOKEN", "")
+WA_PHONE_NUMBER_ID      = os.getenv("WA_PHONE_NUMBER_ID", "")
+META_WA_TOKEN           = os.getenv("META_WA_TOKEN", "")
 TESSERACT_PATH          = r"C:\Users\Sebitas\Downloads\tesseract-5.5.2\tesseract-5.5.2\tesseract.exe"
 
 # KB / RAG
@@ -261,6 +263,21 @@ def bootstrap_schema() -> None:
         updated_at    TIMESTAMPTZ  DEFAULT now()
     );"""
 
+    ddl_lead_state = """
+    CREATE TABLE IF NOT EXISTS lead_state (
+        lead_id              UUID         PRIMARY KEY
+                               REFERENCES leads(lead_id) ON DELETE CASCADE,
+        fase                 VARCHAR(30)  DEFAULT 'nuevo',
+        producto_detectado   VARCHAR(50),
+        datos_recogidos      JSONB        DEFAULT '{}'::jsonb,
+        mensajes_intercambiados INT       DEFAULT 0,
+        ultimo_mensaje       TIMESTAMPTZ,
+        derivado_a_humano    BOOLEAN      DEFAULT FALSE,
+        notas                JSONB        DEFAULT '[]'::jsonb,
+        created_at           TIMESTAMPTZ  DEFAULT now(),
+        updated_at           TIMESTAMPTZ  DEFAULT now()
+    );"""
+
     ddl_conversations = """
     CREATE TABLE IF NOT EXISTS conversations (
         id        BIGSERIAL PRIMARY KEY,
@@ -308,7 +325,7 @@ def bootstrap_schema() -> None:
         with conn.cursor() as cur:
             for ddl in (
                 ddl_ext_uuid, ddl_ext_vector,
-                ddl_leads, ddl_profile, ddl_state,
+                ddl_leads, ddl_profile, ddl_state, ddl_lead_state,
                 ddl_conversations,
                 ddl_kb, ddl_place_cache,
                 ddl_indexes,
@@ -457,6 +474,242 @@ def reset_state(lead_id: str) -> None:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM conversation_state WHERE lead_id = %s", (lead_id,))
         conn.commit()
+
+# ══════════════════════════════════════════════════════
+# LEAD STATE (fases persistentes)
+# ══════════════════════════════════════════════════════
+
+FASES = ["nuevo", "calificando", "datos_minimos", "listo_para_humano", "cerrado"]
+
+LEAD_STATE_DEFAULT = {
+    "fase": "nuevo",
+    "producto_detectado": None,
+    "datos_recogidos": {
+        "nombre": None,
+        "edad": None,
+        "codigo_postal": None,
+        "num_asegurados": None,
+        "tiene_preexistencias": None,
+    },
+    "mensajes_intercambiados": 0,
+    "ultimo_mensaje": None,
+    "derivado_a_humano": False,
+    "notas": [],
+}
+
+
+def init_lead_state(lead_id: str) -> None:
+    """Crea fila lead_state si no existe."""
+    with db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO lead_state (lead_id) VALUES (%s) ON CONFLICT (lead_id) DO NOTHING",
+                (lead_id,),
+            )
+        conn.commit()
+
+
+def load_lead_state(lead_id: str) -> dict:
+    """Carga el lead_state desde PostgreSQL."""
+    with db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT fase, producto_detectado, datos_recogidos, mensajes_intercambiados, "
+                "ultimo_mensaje, derivado_a_humano, notas "
+                "FROM lead_state WHERE lead_id = %s",
+                (lead_id,),
+            )
+            row = cur.fetchone()
+    if row:
+        return {
+            "fase": row[0] or "nuevo",
+            "producto_detectado": row[1],
+            "datos_recogidos": _safe_json(row[2]) or dict(LEAD_STATE_DEFAULT["datos_recogidos"]),
+            "mensajes_intercambiados": int(row[3] or 0),
+            "ultimo_mensaje": row[4],
+            "derivado_a_humano": bool(row[5]),
+            "notas": _safe_json(row[6]) or [],
+        }
+    return dict(LEAD_STATE_DEFAULT)
+
+
+def save_lead_state(lead_id: str, ls: dict) -> None:
+    """Guarda el lead_state en PostgreSQL."""
+    with db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO lead_state
+                    (lead_id, fase, producto_detectado, datos_recogidos,
+                     mensajes_intercambiados, ultimo_mensaje, derivado_a_humano, notas, updated_at)
+                VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, now())
+                ON CONFLICT (lead_id) DO UPDATE SET
+                    fase = EXCLUDED.fase,
+                    producto_detectado = EXCLUDED.producto_detectado,
+                    datos_recogidos = EXCLUDED.datos_recogidos,
+                    mensajes_intercambiados = EXCLUDED.mensajes_intercambiados,
+                    ultimo_mensaje = EXCLUDED.ultimo_mensaje,
+                    derivado_a_humano = EXCLUDED.derivado_a_humano,
+                    notas = EXCLUDED.notas,
+                    updated_at = now()
+                """,
+                (
+                    lead_id,
+                    ls.get("fase", "nuevo"),
+                    ls.get("producto_detectado"),
+                    json.dumps(ls.get("datos_recogidos", {})),
+                    ls.get("mensajes_intercambiados", 0),
+                    ls.get("ultimo_mensaje"),
+                    ls.get("derivado_a_humano", False),
+                    json.dumps(ls.get("notas", [])),
+                ),
+            )
+        conn.commit()
+
+
+def advance_lead_phase(lead_id: str, ls: dict, nueva_fase: str, nota: Optional[str] = None) -> dict:
+    """
+    Avanza el lead a una nueva fase si es válido.
+    Devuelve el lead_state actualizado.
+    """
+    fases_ordenadas = {f: i for i, f in enumerate(FASES)}
+    actual = fases_ordenadas.get(ls["fase"], -1)
+    nueva = fases_ordenadas.get(nueva_fase, -1)
+    
+    if nueva < actual:
+        logger.warning("LEAD_PHASE_REGRESS lead=%s %s -> %s (no permitido)", lead_id, ls["fase"], nueva_fase)
+        return ls
+    
+    ls["fase"] = nueva_fase
+    if nota:
+        ls["notas"].append(nota)
+    
+    logger.info("LEAD_PHASE lead=%s %s -> %s", lead_id, FASES[actual] if actual >= 0 else "?", nueva_fase)
+    save_lead_state(lead_id, ls)
+    return ls
+
+
+def _check_datos_minimos_completos(ls: dict) -> bool:
+    """Verifica si los datos mínimos del lead están completos."""
+    datos = ls.get("datos_recogidos", {})
+    campos_requeridos = ["nombre", "edad", "codigo_postal"]
+    for campo in campos_requeridos:
+        if not datos.get(campo):
+            return False
+    return True
+
+
+def _notify_human_handoff(lead_id: str, ls: dict, ultimo_texto: str, sender_id: str) -> None:
+    """
+    Envía un WhatsApp a Rosa/Sebastián (34603448765) cuando un lead
+    está listo para asesoría humana.
+    """
+    datos = ls.get("datos_recogidos", {})
+    producto = ls.get("producto_detectado", "no detectado")
+    
+    mensaje = (
+        f"🔔 Lead listo para asesoría
+"
+        f"Nombre: {datos.get('nombre', '?')}
+"
+        f"Producto: {producto}
+"
+        f"Datos: {json.dumps(datos, ensure_ascii=False)}
+"
+        f"Último mensaje: {ultimo_texto[:100]}
+"
+        f"Responder: wa.me/{sender_id}"
+    )
+    
+    try:
+        _meta_send_wa("34603448765", mensaje)
+        logger.info("HANDOFF_NOTIFIED lead=%s to=34603448765", lead_id)
+    except Exception as e:
+        logger.error("HANDOFF_NOTIFY_ERR lead=%s %s", lead_id, e)
+
+
+def update_lead_state_from_message(lead_id: str, text: str, sender_id: str, state: dict, ls: dict) -> dict:
+    """
+    Actualiza el lead_state basado en el mensaje actual y el estado de la conversación.
+    Se llama en cada mensaje entrante.
+    """
+    ls["mensajes_intercambiados"] += 1
+    ls["ultimo_mensaje"] = datetime.now()
+    
+    slots = state.get("slots", {})
+    producto = slots.get("product_interest") or ls.get("producto_detectado")
+    
+    # Detectar producto
+    if producto and not ls["producto_detectado"]:
+        ls["producto_detectado"] = producto
+        ls = advance_lead_phase(lead_id, ls, "calificando", f"Producto detectado: {producto}")
+    
+    # Actualizar datos recogidos desde slots
+    datos = ls["datos_recogidos"]
+    if slots.get("name"): datos["nombre"] = slots["name"]
+    if slots.get("age") or slots.get("ages"):
+        ages = slots.get("ages") or [slots.get("age")]
+        if ages and isinstance(ages, list) and len(ages) > 0:
+            datos["edad"] = str(ages[0])
+    if slots.get("province") or slots.get("cp"):
+        datos["codigo_postal"] = slots.get("cp") or slots.get("province")
+    if slots.get("num_people"): datos["num_asegurados"] = int(slots["num_people"])
+    if slots.get("has_preexisting") is not None: datos["tiene_preexistencias"] = bool(slots["has_preexisting"])
+    
+    # Avanzar fases según el estado
+    if ls["fase"] == "calificando":
+        # Si ya tenemos producto y estamos en flujo de datos
+        if state.get("step") not in ("product_interest", None, ""):
+            ls = advance_lead_phase(lead_id, ls, "datos_minimos", "Inicio recogida de datos")
+    
+    if ls["fase"] == "datos_minimos":
+        if _check_datos_minimos_completos(ls) and not ls["derivado_a_humano"]:
+            ls = advance_lead_phase(lead_id, ls, "listo_para_humano", "Datos mínimos completos")
+            ls["derivado_a_humano"] = True
+            _notify_human_handoff(lead_id, ls, text, sender_id)
+            # Evaluar conversación al derivar
+            try:
+                from backend.agent_evaluator import evaluate_conversation
+                evaluate_conversation(lead_id)
+            except Exception as e:
+                logger.warning("EVALUATE_ERR lead=%s %s", lead_id, e)
+    
+    # Si el lead dice que no le interesa
+    text_lower = text.lower().strip()
+    if any(p in text_lower for p in ["no me interesa", "no gracias", "no quiero", "déjalo", "no, gracias"]):
+        ls = advance_lead_phase(lead_id, ls, "cerrado", f"Lead desistió: {text[:50]}")
+        # Evaluar conversación al cerrar
+        try:
+            from backend.agent_evaluator import evaluate_conversation
+            evaluate_conversation(lead_id)
+        except Exception as e:
+            logger.warning("EVALUATE_ERR lead=%s %s", lead_id, e)
+    
+    save_lead_state(lead_id, ls)
+    return ls
+
+
+def check_lead_expiry(lead_id: str, ls: dict) -> Optional[dict]:
+    """
+    Si el lead lleva más de 24h sin actividad, lo cierra.
+    Si vuelve a escribir, se crea una nueva fase pero conserva historial.
+    """
+    if ls["fase"] == "cerrado":
+        return None  # Ya está cerrado
+    
+    ultimo = ls.get("ultimo_mensaje")
+    if ultimo:
+        ahora = datetime.now()
+        if isinstance(ultimo, str):
+            try:
+                from datetime import datetime as dt
+                ultimo = dt.fromisoformat(ultimo.replace("Z", "+00:00"))
+            except:
+                ultimo = None
+        if ultimo and (ahora - ultimo).total_seconds() > 86400:  # 24h
+            ls = advance_lead_phase(None, ls, "cerrado", "Inactividad 24h+")
+            return ls
+    return None
 
 def update_profile_from_slots(lead_id: str, slots: dict) -> None:
     FIELD_MAP: dict[str, tuple] = {
@@ -1429,6 +1682,40 @@ def _meta_send_ig_dm(recipient_id: str, message: str) -> bool:
         logger.error("META_SEND_ERR %s", e)
         return False
 
+def _meta_send_wa(recipient_id: str, message: str) -> bool:
+    """Envía un mensaje por WhatsApp Cloud API."""
+    if _meta_sender_is_blocked(recipient_id):
+        return False
+    token = META_WA_TOKEN or META_ACCESS_TOKEN
+    phone_id = WA_PHONE_NUMBER_ID
+    if not token or not recipient_id or not phone_id:
+        logger.warning("WA_SEND_MISSING_CONFIG phone_id=%s token=%s", bool(phone_id), bool(token))
+        return False
+    url = f"https://graph.facebook.com/v19.0/{phone_id}/messages?access_token={token}"
+    data = json.dumps({
+        "messaging_product": "whatsapp",
+        "to": recipient_id,
+        "type": "text",
+        "text": {"body": message[:1800]}
+    }).encode("utf-8")
+    req = URequest(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urlopen(req, timeout=10):
+            logger.info("WA_SEND_OK to=%s", recipient_id)
+            return True
+    except HTTPError as e:
+        body = e.read().decode("utf-8", errors="ignore")
+        if e.code == 403 and _is_meta_permission_error(body):
+            _meta_block_sender(recipient_id)
+            logger.warning("WA_SEND_403_PERM sender_id=%s", recipient_id)
+            return False
+        logger.error("WA_SEND_HTTP_ERR %s: %s", e.code, body[:200])
+        return False
+    except Exception as e:
+        logger.error("WA_SEND_ERR %s", e)
+        return False
+
+
 def send_with_lag_sync(recipient_id: str, message: str) -> None:
     time.sleep(random.uniform(LAG_MIN_S, LAG_MAX_S))
     _meta_send_ig_dm(recipient_id, message)
@@ -1656,6 +1943,18 @@ def process_message(lead_id: str, text: str, sender_id: str, source: str = "ig")
         state["ig_user_id"] = sender_id
     state["channel"] = channel
     state["source"] = source
+
+    # Lead state persistente
+    init_lead_state(lead_id)
+    ls = load_lead_state(lead_id)
+    
+    # Comprobar expiración por inactividad
+    expired = check_lead_expiry(lead_id, ls)
+    if expired:
+        # Si expiró, reiniciamos para nueva conversación pero conservamos historial
+        ls = dict(LEAD_STATE_DEFAULT)
+        ls["notas"] = ["Nueva conversación tras expiración"]
+        init_lead_state(lead_id)
 
     mode = state.get("mode", "idle")
     filled_slots = dict(state["slots"])
@@ -1938,6 +2237,9 @@ def process_message(lead_id: str, text: str, sender_id: str, source: str = "ig")
         if random.random() < 0.2:
             msg = f"Veo que tienes las cosas muy claras y eso nos ayuda mucho a asesorarte mejor 😊 {msg}"
 
+    # Actualizar lead_state persistente
+    update_lead_state_from_message(lead_id, text, sender_id, state, ls)
+    
     save_state(lead_id, state)
     return msg
 
@@ -1946,6 +2248,7 @@ def handle_incoming(sender_id: str, text: str) -> str:
     lead_id = lead_id_from_ig_user(sender_id)
     ensure_lead_row(lead_id, source_channel="instagram_dm", category="salud")
     ensure_profile_row(lead_id)
+    init_lead_state(lead_id)
     log_event(lead_id, "ig", "in", text, intent="ig_in")
     return process_message(lead_id, text, sender_id=sender_id, source="instagram_dm")
 
@@ -1976,6 +2279,92 @@ class RagQuery(BaseModel):
     top_k:    int = 5
 
 # ══════════════════════════════════════════════════════
+# PRODUCT PLAYBOOKS (cargados desde product_playbooks.json)
+# ══════════════════════════════════════════════════════
+
+_PLAYBOOKS_PATH = os.path.join(os.path.dirname(__file__), "product_playbooks.json")
+_PLAYBOOKS: Dict[str, dict] = {}  # producto -> playbook
+_PLAYBOOKS_LOADED = False
+
+
+def _load_playbooks() -> None:
+    """Carga los playbooks desde product_playbooks.json al iniciar el servidor."""
+    global _PLAYBOOKS, _PLAYBOOKS_LOADED
+    try:
+        if not os.path.exists(_PLAYBOOKS_PATH):
+            logger.warning("PLAYBOOKS_NO_FILE %s — se usará prompt base", _PLAYBOOKS_PATH)
+            _PLAYBOOKS_LOADED = False
+            return
+        with open(_PLAYBOOKS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        productos = data.get("productos", [])
+        for pb in productos:
+            prod = pb.get("producto")
+            if prod:
+                _PLAYBOOKS[prod] = pb
+        _PLAYBOOKS_LOADED = True
+        logger.info("PLAYBOOKS_LOADED %d productos desde %s", len(_PLAYBOOKS), _PLAYBOOKS_PATH)
+    except Exception as e:
+        logger.error("PLAYBOOKS_LOAD_ERROR %s", e)
+        _PLAYBOOKS_LOADED = False
+
+
+def get_playbook(producto: str) -> Optional[dict]:
+    """Devuelve el playbook para un producto, o None si no existe."""
+    return _PLAYBOOKS.get(producto)
+
+
+def build_playbook_prompt(producto: str) -> str:
+    """
+    Construye un bloque de texto con las reglas del playbook para inyectar
+    en el prompt del agente. Si no hay playbook, devuelve un prompt genérico.
+    """
+    pb = get_playbook(producto)
+    if not pb:
+        return ""
+    
+    lines = []
+    lines.append("=== INSTRUCCIONES COMERCIALES ===")
+    
+    resumen = pb.get("resumen_comercial", "")
+    if resumen:
+        lines.append(f"Resumen del producto: {resumen}")
+    
+    preguntas = pb.get("preguntas_iniciales", [])
+    if preguntas:
+        lines.append("Preguntas recomendadas para el cliente:")
+        for p in preguntas:
+            lines.append(f"  - {p}")
+    
+    datos = pb.get("datos_minimos", [])
+    if datos:
+        lines.append("Datos mínimos necesarios:")
+        for d in datos:
+            lines.append(f"  - {d}")
+    
+    objeciones = pb.get("objeciones_frecuentes", [])
+    if objeciones:
+        lines.append("Objeciones frecuentes del cliente:")
+        for o in objeciones:
+            lines.append(f"  - {o}")
+    
+    limites = pb.get("limites", [])
+    if limites:
+        lines.append("LÍMITES — lo que NO debes prometer:")
+        for l in limites:
+            lines.append(f"  - {l}")
+    
+    derivar = pb.get("cuando_derivar_humano", [])
+    if derivar:
+        lines.append("Cuándo derivar a un agente humano:")
+        for d in derivar:
+            lines.append(f"  - {d}")
+    
+    lines.append("=== FIN INSTRUCCIONES ===")
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
 # Startup
 # ══════════════════════════════════════════════════════
 
@@ -1985,6 +2374,28 @@ async def on_startup():
         bootstrap_schema()
     except Exception as e:
         logger.error("BOOTSTRAP_ERROR %s", e)
+    # Cargar playbooks al iniciar (no bloquea si falla)
+    _load_playbooks()
+    
+    # Iniciar APScheduler para resumen semanal (lunes 9:00)
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from backend.agent_evaluator import generate_weekly_summary
+        
+        _scheduler = BackgroundScheduler()
+        _scheduler.add_job(
+            generate_weekly_summary,
+            trigger='cron',
+            day_of_week='mon',
+            hour=9,
+            minute=0,
+            id='weekly_summary',
+            replace_existing=True,
+        )
+        _scheduler.start()
+        logger.info("SCHEDULER_STARTED weekly_summary: lunes 9:00")
+    except Exception as e:
+        logger.warning("SCHEDULER_NOT_STARTED %s", e)
 
 # ══════════════════════════════════════════════════════
 # ENDPOINTS
@@ -2000,6 +2411,28 @@ def health():
         "kb_data_dir": KB_DATA_DIR,
         "auto_wa_enabled": AUTO_WA_ENABLED,
         "auto_wa_threshold": AUTO_WA_SCORE_THRESHOLD,
+        "playbooks_loaded": _PLAYBOOKS_LOADED,
+        "playbooks_count": len(_PLAYBOOKS),
+    }
+
+# -------- Playbooks debug endpoint --------
+
+@app.get("/playbooks")
+def playbooks_list(producto: Optional[str] = None):
+    """Devuelve los playbooks cargados. Si se especifica producto, solo ese."""
+    if not _PLAYBOOKS_LOADED:
+        return {"ok": False, "error": "Playbooks no cargados", "playbooks_loaded": False}
+    if producto:
+        pb = get_playbook(producto)
+        if not pb:
+            return {"ok": False, "error": f"Producto '{producto}' no encontrado"}
+        return {"ok": True, "playbook": pb}
+    return {
+        "ok": True,
+        "playbooks_loaded": True,
+        "total": len(_PLAYBOOKS),
+        "productos": list(_PLAYBOOKS.keys()),
+        "playbooks": list(_PLAYBOOKS.values()),
     }
 
 # -------- Follow-up / rescate de leads --------
@@ -2268,7 +2701,219 @@ async def meta_webhook_receive(request: FastAPIRequest, background_tasks: Backgr
 
     return {"ok": True, "processed": len(messages)}
 
+
+# ══════════════════════════════════════════════════════
+# WHATSAPP CLOUD API ENDPOINTS
+# ══════════════════════════════════════════════════════
+
+@app.get("/wa/inbound")
+async def wa_webhook_verify(request: FastAPIRequest):
+    """Verificación del webhook de WhatsApp Cloud API (Meta)."""
+    p = request.query_params
+    mode = p.get("hub.mode")
+    token = p.get("hub.verify_token")
+    challenge = p.get("hub.challenge")
+    if mode == "subscribe" and token == META_VERIFY_TOKEN and challenge:
+        logger.info("WA_WEBHOOK_VERIFIED")
+        return PlainTextResponse(content=challenge)
+    raise HTTPException(403, "Verification failed")
+
+
+@app.post("/wa/inbound")
+async def wa_webhook_receive(request: FastAPIRequest, background_tasks: BackgroundTasks):
+    """Recibe mensajes entrantes de WhatsApp Cloud API."""
+    raw = await request.body()
+    sig256 = request.headers.get("X-Hub-Signature-256", "")
+    sig1 = request.headers.get("X-Hub-Signature", "")
+    if not verify_meta_signature(raw, sig256, sig1):
+        raise HTTPException(403, "Bad signature")
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        raise HTTPException(400, "Invalid JSON")
+
+    logger.info("WA_INCOMING %s", json.dumps(payload, ensure_ascii=False)[:400])
+
+    def _extract_wa_messages(payload: dict) -> List[Tuple[str, str, Optional[str]]]:
+        """
+        Extrae mensajes de WhatsApp Cloud API.
+        Formato: entry[].changes[].value.messages[0]
+        Devuelve: [(sender_id, text, contact_name), ...]
+        """
+        results: List[Tuple[str, str, Optional[str]]] = []
+        for entry in payload.get("entry", []):
+            for ch in (entry.get("changes") or []):
+                if ch.get("field") != "messages":
+                    continue
+                value = ch.get("value", {})
+                # Obtener nombre del contacto si está disponible
+                contacts = value.get("contacts", [])
+                contact_name = None
+                if contacts:
+                    profile = contacts[0].get("profile", {})
+                    contact_name = profile.get("name")
+                
+                for msg in (value.get("messages") or []):
+                    msg_type = msg.get("type", "")
+                    msg_from = str(msg.get("from", "")).strip()
+                    
+                    if not msg_from:
+                        continue
+                    
+                    text_body = ""
+                    if msg_type == "text":
+                        text_body = (msg.get("text", {}) or {}).get("body", "").strip()
+                    elif msg_type == "interactive":
+                        # Botón reply
+                        btn_reply = msg.get("interactive", {}).get("button_reply", {})
+                        text_body = btn_reply.get("title", "").strip()
+                    
+                    if msg_from and text_body:
+                        results.append((msg_from, text_body, contact_name))
+        return results
+
+    messages = _extract_wa_messages(payload)
+    for sender_id, text, contact_name in messages:
+        lead_id = lead_id_from_ig_user(sender_id)
+        cached = _dedup_get(lead_id, text)
+        if cached:
+            if not _meta_sender_is_blocked(sender_id):
+                background_tasks.add_task(_meta_send_wa, sender_id, cached)
+            continue
+
+        reply = handle_incoming(sender_id, text)
+        _dedup_set(lead_id, text, reply)
+        if not _meta_sender_is_blocked(sender_id):
+            background_tasks.add_task(_meta_send_wa, sender_id, reply)
+
+    return {"ok": True, "processed": len(messages)}
+
 # -------- RAG debug endpoint --------
+
+# -------- Lead State debug endpoint --------
+
+@app.get("/api/lead/{lead_id}/state")
+def lead_state_get(lead_id: str):
+    """Devuelve el lead_state completo para depuración."""
+    try:
+        ls = load_lead_state(lead_id)
+        return {"ok": True, "lead_id": lead_id, "lead_state": ls}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+# -------- Dashboard: listar leads del día --------
+
+@app.get("/api/insights")
+def insights_list(aplicado: Optional[bool] = None, token: str = ""):
+    """Devuelve insights del evaluador. Protegido con KB_ADMIN_TOKEN."""
+    if KB_ADMIN_TOKEN and token != KB_ADMIN_TOKEN:
+        raise HTTPException(403, "Invalid token")
+    try:
+        from backend.agent_evaluator import get_insights
+        resultados = get_insights(aplicado=aplicado)
+        return {"ok": True, "total": len(resultados), "insights": resultados}
+    except Exception as e:
+        logger.error("INSIGHTS_LIST_ERR %s", e)
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/insights/{insight_id}/apply")
+def insights_apply(insight_id: int, token: str = ""):
+    """Marca un insight como aplicado. Protegido con KB_ADMIN_TOKEN."""
+    if KB_ADMIN_TOKEN and token != KB_ADMIN_TOKEN:
+        raise HTTPException(403, "Invalid token")
+    try:
+        from backend.agent_evaluator import apply_insight
+        ok = apply_insight(insight_id)
+        return {"ok": ok, "insight_id": insight_id}
+    except Exception as e:
+        logger.error("INSIGHTS_APPLY_ERR %s", e)
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/leads")
+def leads_list(token: str = ""):
+    """Devuelve los leads del día con su lead_state. Protegido con KB_ADMIN_TOKEN."""
+    if KB_ADMIN_TOKEN and token != KB_ADMIN_TOKEN:
+        raise HTTPException(403, "Invalid token")
+    
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    with db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    l.lead_id::text,
+                    l.last_activity_at,
+                    ls.fase,
+                    ls.producto_detectado,
+                    ls.datos_recogidos,
+                    ls.mensajes_intercambiados,
+                    ls.ultimo_mensaje,
+                    ls.derivado_a_humano,
+                    ls.notas,
+                    cs.ig_user_id,
+                    cs.slots->>'name' as contact_name
+                FROM leads l
+                LEFT JOIN lead_state ls ON ls.lead_id = l.lead_id
+                LEFT JOIN conversation_state cs ON cs.lead_id = l.lead_id
+                WHERE l.last_activity_at >= %s
+                ORDER BY l.last_activity_at DESC
+                LIMIT 100
+            """, (today_start,))
+            rows = cur.fetchall()
+    
+    leads = []
+    for row in rows:
+        lead_id, last_activity, fase, producto, datos_raw, msgs, ultimo, derivado, notas_raw, ig_uid, contact_name = row
+        
+        datos = {}
+        if datos_raw:
+            try:
+                if isinstance(datos_raw, str):
+                    datos = json.loads(datos_raw)
+                else:
+                    datos = datos_raw
+            except:
+                datos = {}
+        
+        sender_id = ig_uid or ""
+        
+        leads.append({
+            "lead_id": lead_id,
+            "fase": fase or "nuevo",
+            "producto_detectado": producto,
+            "datos_recogidos": datos,
+            "mensajes_intercambiados": msgs or 0,
+            "ultimo_mensaje": ultimo.isoformat() if ultimo else None,
+            "last_activity_at": last_activity.isoformat() if last_activity else None,
+            "derivado_a_humano": bool(derivado),
+            "sender_id": sender_id,
+            "contact_name": contact_name,
+        })
+    
+    return {"ok": True, "total": len(leads), "leads": leads}
+
+
+# -------- Dashboard HTML --------
+
+import os as _os
+_DASHBOARD_PATH = _os.path.join(_os.path.dirname(__file__), "..", "dashboard", "index.html")
+
+
+@app.get("/dashboard")
+def dashboard(token: str = ""):
+    """Sirve el panel de leads estático."""
+    if KB_ADMIN_TOKEN and token != KB_ADMIN_TOKEN:
+        raise HTTPException(403, "Invalid token")
+    try:
+        with open(_DASHBOARD_PATH, "r", encoding="utf-8") as f:
+            html = f.read()
+        return HTMLResponse(content=html)
+    except FileNotFoundError:
+        raise HTTPException(404, "Dashboard not found")
+
 
 @app.post("/rag/ask")
 def rag_ask(q: RagQuery):

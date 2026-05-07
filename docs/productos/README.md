@@ -116,6 +116,46 @@ El archivo `backend/product_playbooks.json` tiene esta estructura:
 - ✅ Tono cercano, breve, español natural (orientado a WhatsApp)
 - ✅ Los playbooks están diseñados para un agente que recibe leads de Google Ads
 
+## Política de marcas
+
+Los PDFs de producto pueden contener nombres de compañías aseguradoras (Adeslas, DKV, Sanitas, Mapfre, etc.). El sistema **sanitiza automáticamente** estos nombres antes de generar cualquier playbook.
+
+### ¿Qué se sanitiza?
+
+La lista completa de términos reemplazados incluye:
+
+| Categoría | Compañías |
+|-----------|-----------|
+| **Salud** | Adeslas, DKV, Sanitas, Asisa, Cigna, Humana |
+| **Generales** | Mapfre, Allianz, AXA, Generali, Zurich, Caser, Mutua Madrileña, Pelayo, Reale, SegurCaixa, FIATC, MGS, Helvetia, Berkley |
+| **Vida/Decesos** | Aegon, CNP, Nationale Nederlanden, Previsora General, Preventiva, Santa Lucía, Ocaso, Funespaña |
+| **Autos/Hogar** | Línea Directa |
+| **Extranjería** | Grupo ASV |
+| **Bancos** | BBVA, Santander, ING, CaixaBank, Bankinter, Sabadell |
+| **Otras** | Catalana Occidente, Plus Ultra, Liberty |
+
+### ¿Cómo funciona?
+
+1. **`sanitize_text()`** — Capa principal que se aplica ANTES de generar cualquier playbook:
+   - Reemplaza nombres de marcas por términos neutros ("la aseguradora", "la compañía", "la mutua", etc.)
+   - Limpia caracteres de control y espacios múltiples
+   - Normaliza saltos de línea
+   - Elimina números de página y encabezados
+
+2. **`sanitize_brands()`** — Función específica para marcas:
+   - Insensible a mayúsculas/minúsculas (Adeslas, ADESLAS, adeslas)
+   - Detecta variaciones ortográficas
+   - Aplica contexto semántico para elegir el reemplazo adecuado
+
+3. **`validate_playbook_brands()`** — Validación post-generación:
+   - Verifica todos los campos del JSON de salida
+   - Si detecta alguna marca, lanza un WARNING en el log
+   - Incluye el contador de warnings en los metadatos del JSON
+
+### ¿Qué hacer si aparece una marca nueva?
+
+Si encuentras una marca que no está siendo sanitizada, añádela a la lista `_BRAND_NAMES` en `backend/extract_product_rules.py` y vuelve a ejecutar la extracción.
+
 ## Notas técnicas
 
 - El script reutiliza `pypdf` y `pdfplumber` (ya disponibles en el proyecto)

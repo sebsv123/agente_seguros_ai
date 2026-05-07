@@ -42,3 +42,7 @@ Thumbs.db
 *.dll
 *.so
 *.dylib
+
+# PDFs comerciales (confidenciales — no subir al repo)
+docs/productos/**/*.pdf
+*.pdf
