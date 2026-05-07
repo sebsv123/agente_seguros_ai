@@ -1,0 +1,6 @@
+# ====== Windows (ingesta completa con embeddings) ======
+-r requirements-dev.txt
+
+# Embeddings locales (SOLO WINDOWS: requiere torch + numpy ~2GB)
+sentence-transformers==3.2.1
+numpy==2.1.3

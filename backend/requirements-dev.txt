@@ -1,0 +1,14 @@
+# ====== Desarrollo / Extracción de PDFs ======
+-r requirements.txt
+
+# Extracción de texto de PDFs
+pypdf==5.1.0
+pdfplumber==0.11.4
+
+# OCR (opcional, requiere Tesseract binario)
+# pytesseract
+# Pillow
+
+# Embeddings locales (NO INSTALAR en producción: requiere torch + numpy ~2GB)
+# sentence-transformers
+# numpy

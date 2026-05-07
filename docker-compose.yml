@@ -1,74 +1,40 @@
+version: '3.8'
+
 services:
   db:
     image: pgvector/pgvector:pg16
-    container_name: agente_db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: agente
-      POSTGRES_PASSWORD: agente_pw
-      POSTGRES_DB: agente
+      POSTGRES_USER: ${POSTGRES_USER:-agente}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agente_pw}
+      POSTGRES_DB: ${POSTGRES_DB:-agente_ai}
+    # Puerto expuesto en la red privada del servidor Linux
+    # Windows se conecta a LINUX_PRIVATE_IP:5432
+    # Firewall en Linux restringe acceso solo a IP de Windows
     ports:
-      - "5433:5432"
+      - "${PG_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/rag/setup_db.sql:/docker-entrypoint-initdb.d/01-setup.sql
+      - ./backend/rag/setup_pg_hba.sql:/docker-entrypoint-initdb.d/02-pg_hba.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U agente -d agente -h 127.0.0.1 -p 5432"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agente} -d ${POSTGRES_DB:-agente_ai}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  n8n:
-    image: n8nio/n8n:latest
-    container_name: agente_n8n
+  backend:
+    build: .
     restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      DB_DSN: postgresql://${POSTGRES_USER:-agente}:${POSTGRES_PASSWORD:-agente_pw}@db:5432/${POSTGRES_DB:-agente_ai}
     depends_on:
       db:
         condition: service_healthy
-    ports:
-      - "5678:5678"
-    environment:
-      DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: db
-      DB_POSTGRESDB_PORT: "5432"
-      DB_POSTGRESDB_DATABASE: agente
-      DB_POSTGRESDB_USER: agente
-      DB_POSTGRESDB_PASSWORD: agente_pw
-
-      # Public URLs (behind Cloudflare Tunnel)
-      N8N_HOST: n8n.valentinproteccionintegral.com
-      N8N_PROTOCOL: https
-      N8N_PORT: "5678"
-      N8N_EDITOR_BASE_URL: https://n8n.valentinproteccionintegral.com
-      WEBHOOK_URL: https://n8n.valentinproteccionintegral.com
-
-      # Secret from .env
-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
-
-      # Basic auth off for now
-      N8N_BASIC_AUTH_ACTIVE: "false"
-
-    volumes:
-      - n8n_data:/home/node/.n8n
-
-    healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:5678/', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: agente_cloudflared
-    restart: unless-stopped
-    depends_on:
-      n8n:
-        condition: service_healthy
-    environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
-    volumes:
-      - ./cloudflared.yml:/etc/cloudflared/config.yml:ro
-    command: tunnel --no-autoupdate --protocol http2 --ha-connections 1 --config /etc/cloudflared/config.yml run
 
 volumes:
-  n8n_data:
-  postgres_data:
+  pgdata:
