@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+
+# Git
+.git/
+.gitignore
+
+# Data (no copiar datos locales al contenedor)
+data/
+data_*/
+backups/
+n8n_extracted/
+backup_linux/
+
+# PDFs comerciales
+docs/productos/**/*.pdf
+
+# Entorno
+.env
+.env.example
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Scripts de desarrollo
+_add_*.py
+_create_*.py
+
+# ML models (no caben en el contenedor)
+*.bin
+*.gguf
+*.pt
+*.pth
+*.onnx

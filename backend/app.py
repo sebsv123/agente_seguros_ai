@@ -24,9 +24,21 @@ import random
 import re
 import requests
 import threading
-import pytesseract
-from PIL import Image
-from io import BytesIO
+try:
+    import pytesseract
+    _HAS_TESSERACT = True
+except Exception:
+    pytesseract = None  # type: ignore
+    _HAS_TESSERACT = False
+
+try:
+    from PIL import Image
+    from io import BytesIO
+    _HAS_PIL = True
+except Exception:
+    Image = None  # type: ignore
+    BytesIO = None  # type: ignore
+    _HAS_PIL = False
 import time
 import uuid
 from pathlib import Path
@@ -608,16 +620,11 @@ def _notify_human_handoff(lead_id: str, ls: dict, ultimo_texto: str, sender_id: 
     producto = ls.get("producto_detectado", "no detectado")
     
     mensaje = (
-        f"🔔 Lead listo para asesoría
-"
-        f"Nombre: {datos.get('nombre', '?')}
-"
-        f"Producto: {producto}
-"
-        f"Datos: {json.dumps(datos, ensure_ascii=False)}
-"
-        f"Último mensaje: {ultimo_texto[:100]}
-"
+        "\U0001f514 Lead listo para asesoría\n"
+        f"Nombre: {datos.get('nombre', '?')}\n"
+        f"Producto: {producto}\n"
+        f"Datos: {json.dumps(datos, ensure_ascii=False)}\n"
+        f"Último mensaje: {ultimo_texto[:100]}\n"
         f"Responder: wa.me/{sender_id}"
     )
     

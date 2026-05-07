@@ -1,9 +1,16 @@
+# ====== Producción mínima ======
+# Solo lo necesario para arrancar el backend FastAPI
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
 psycopg[binary]==3.2.3
 pydantic==2.10.3
-pypdf==5.1.0
-pdfplumber==0.11.4
-sentence-transformers==3.2.1
-numpy==2.1.3
+python-dotenv==1.0.1
 apscheduler==3.10.4
+
+# ====== Opcionales (no críticos para arranque) ======
+# pypdf          # Extracción de texto de PDFs (solo para ingest)
+# pdfplumber     # Alternativa a pypdf
+# sentence-transformers  # NO INSTALAR: requiere torch (~2GB)
+# numpy          # NO INSTALAR: solo necesario con sentence-transformers
+# pytesseract    # NO INSTALAR: OCR local, requiere Tesseract binario
+# Pillow         # NO INSTALAR: solo para OCR
