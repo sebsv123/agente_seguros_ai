@@ -73,38 +73,132 @@ PRODUCT_KEYWORDS: Dict[str, List[str]] = {
     "juridica": ["juridico", "juridica", "jurídico", "defensa", "legal", "abogado"],
 }
 
-# Marcas a sanitizar (NUNCA mencionar en outputs)
-BRAND_PATTERNS = [
-    (re.compile(r"\bASISA\b", re.I), "la aseguradora"),
-    (re.compile(r"\bMapfre\b", re.I), "la compañía"),
-    (re.compile(r"\bSanitas\b", re.I), "la aseguradora"),
-    (re.compile(r"\bAdeslas\b", re.I), "la compañía"),
-    (re.compile(r"\bDKV\b", re.I), "la aseguradora"),
-    (re.compile(r"\bAXA\b", re.I), "la compañía"),
-    (re.compile(r"\bCigna\b", re.I), "la aseguradora"),
-    (re.compile(r"\bCaser\b", re.I), "la compañía"),
-    (re.compile(r"\bMutua Madrileña\b", re.I), "la aseguradora"),
-    (re.compile(r"\bMutua\b", re.I), "la aseguradora"),
-    (re.compile(r"\bAllianz\b", re.I), "la compañía"),
-    (re.compile(r"\bZurich\b", re.I), "la aseguradora"),
-    (re.compile(r"\bGenerali\b", re.I), "la compañía"),
-    (re.compile(r"\bFIATC\b", re.I), "la aseguradora"),
-    (re.compile(r"\bLínea Directa\b", re.I), "la compañía"),
-    (re.compile(r"\bLinea Directa\b", re.I), "la compañía"),
-    (re.compile(r"\bPelayo\b", re.I), "la aseguradora"),
-    (re.compile(r"\bReale\b", re.I), "la compañía"),
-    (re.compile(r"\bSegurCaixa\b", re.I), "la aseguradora"),
-    (re.compile(r"\bBBVA\b", re.I), "el banco"),
-    (re.compile(r"\bSantander\b", re.I), "el banco"),
-    (re.compile(r"\bING\b", re.I), "el banco"),
+# ── Marcas a sanitizar (NUNCA mencionar en outputs) ──
+# Lista completa de aseguradoras, mutuas, bancos y otras compañías
+# que deben ser reemplazadas por términos neutros en cualquier output.
+_BRAND_NAMES: List[str] = [
+    # Salud
+    "Adeslas", "DKV", "Sanitas", "Asisa", "Cigna", "Humana",
+    # Generales
+    "Mapfre", "Allianz", "AXA", "Generali", "Zurich", "Caser",
+    "Mutua Madrileña", "Mutua", "Pelayo", "Reale", "SegurCaixa",
+    "FIATC", "Fiatc", "MGS", "Helvetia", "Berkley", "Berkley",
+    # Vida y decesos
+    "Aegon", "CNP", "Nationale Nederlanden", "Previsora General",
+    "Preventiva", "Santa Lucía", "Santa Lucia", "Ocaso",
+    "Funespaña", "Funeraria",
+    # Autos y hogar
+    "Línea Directa", "Linea Directa",
+    # Extranjería
+    "Grupo ASV",
+    # Bancos (mencionados en contextos de seguro)
+    "BBVA", "Santander", "ING", "CaixaBank", "Bankinter", "Sabadell",
+    # Otras
+    "Catalana Occidente", "Plus Ultra", "Liberty", "Liberty Seguros",
+]
+
+# Compilar patrones una sola vez (insensible a mayúsculas/minúsculas)
+BRAND_PATTERNS: List[Any] = []
+for name in _BRAND_NAMES:
+    # Escapar caracteres especiales (como ñ, í, etc.)
+    escaped = re.escape(name)
+    pattern = re.compile(r"\b" + escaped + r"\b", re.I)
+    # Determinar reemplazo según contexto
+    replacement = "la aseguradora"
+    name_lower = name.lower()
+    if any(kw in name_lower for kw in ["banco", "bbva", "santander", "ing", "caixabank", "bankinter", "sabadell"]):
+        replacement = "la entidad bancaria"
+    elif any(kw in name_lower for kw in ["mutua"]):
+        replacement = "la mutua"
+    elif any(kw in name_lower for kw in ["funeraria", "funespaña"]):
+        replacement = "el servicio funerario"
+    elif any(kw in name_lower for kw in ["línea directa", "linea directa"]):
+        replacement = "la compañía"
+    BRAND_PATTERNS.append((pattern, replacement))
+
+# Patrón adicional para frases comunes con marcas
+_BRAND_CONTEXT_PATTERNS = [
+    (re.compile(r"según\s+(?:la\s+)?(?:aseguradora|compañía|mutua)", re.I), "según la póliza"),
+    (re.compile(r"(?:en|para|de)\s+(?:la\s+)?(?:aseguradora|compañía|mutua)", re.I), "en la póliza"),
+    (re.compile(r"(?:contratado|contratar)\s+con\s+(?:la\s+)?(?:aseguradora|compañía)", re.I), "contratado con la aseguradora"),
 ]
 
 
 def sanitize_brands(text: str) -> str:
-    """Reemplaza nombres de marcas por términos genéricos."""
+    """
+    Reemplaza nombres de marcas de aseguradoras por términos genéricos.
+    
+    - Insensible a mayúsculas/minúsculas
+    - Funciona con variaciones (Adeslas, ADESLAS, adeslas, AdeslaS, etc.)
+    - Aplica contexto semántico para elegir el reemplazo adecuado
+    """
     for pattern, replacement in BRAND_PATTERNS:
         text = pattern.sub(replacement, text)
+    for pattern, replacement in _BRAND_CONTEXT_PATTERNS:
+        text = pattern.sub(replacement, text)
     return text
+
+
+def sanitize_text(text: str) -> str:
+    """
+    Capa completa de sanitización para aplicar ANTES de generar cualquier playbook.
+    
+    - Sanitiza marcas de aseguradoras
+    - Limpia espacios múltiples
+    - Normaliza saltos de línea
+    - Elimina caracteres de control
+    """
+    if not text:
+        return ""
+    # Sanitizar marcas
+    text = sanitize_brands(text)
+    # Limpiar caracteres de control (excepto saltos de línea y tabs)
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
+    # Normalizar saltos de línea
+    text = re.sub(r"\r\n?", "\n", text)
+    # Eliminar líneas que solo contienen números de página o encabezados
+    text = re.sub(r"\n\s*\d+\s*\n", "\n", text)
+    # Limpiar espacios múltiples
+    text = re.sub(r" {2,}", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def validate_playbook_brands(playbook: Dict[str, Any]) -> List[str]:
+    """
+    Verifica que ningún campo del playbook contenga nombres de marcas.
+    Devuelve una lista de warnings encontrados.
+    """
+    warnings: List[str] = []
+    producto = playbook.get("producto", "desconocido")
+    
+    # Compilar regex de todas las marcas para verificación
+    all_brands_pattern = re.compile(
+        r"\b(" + "|".join(re.escape(n) for n in _BRAND_NAMES) + r")\b",
+        re.I
+    )
+    
+    campos_a_verificar = [
+        "resumen_comercial",
+        "perfil_objetivo",
+        "preguntas_iniciales",
+        "datos_minimos",
+        "objeciones_frecuentes",
+        "limites",
+        "cuando_derivar_humano",
+    ]
+    
+    for campo in campos_a_verificar:
+        valor = playbook.get(campo)
+        if isinstance(valor, str):
+            if all_brands_pattern.search(valor):
+                warnings.append(f"  ⚠️ [{producto}] Campo '{campo}' contiene marca: {all_brands_pattern.findall(valor)}")
+        elif isinstance(valor, list):
+            for i, item in enumerate(valor):
+                if isinstance(item, str) and all_brands_pattern.search(item):
+                    warnings.append(f"  ⚠️ [{producto}] Campo '{campo}[{i}]' contiene marca: {all_brands_pattern.findall(item)}")
+    
+    return warnings
 
 
 # ── Detección de producto ─────────────────────────────
@@ -165,10 +259,8 @@ def extract_text(filepath: Path) -> Optional[str]:
     if not text:
         logger.error("No se pudo extraer texto de %s", filepath.name)
         return None
-    # Limpiar texto
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    text = re.sub(r" {2,}", " ", text)
-    return sanitize_brands(text.strip())
+    # Aplicar sanitización completa ANTES de generar cualquier playbook
+    return sanitize_text(text)
 
 
 # ── Generación de playbook ────────────────────────────
@@ -748,12 +840,25 @@ def run_extraction(
     # Consolidar: si hay múltiples playbooks para el mismo producto, fusionarlos
     playbooks_consolidados = _consolidar_playbooks(playbooks)
     
+    # Validar que ningún playbook contenga marcas de aseguradoras
+    total_warnings = 0
+    for pb in playbooks_consolidados:
+        warnings = validate_playbook_brands(pb)
+        for w in warnings:
+            logger.warning(w)
+            total_warnings += 1
+    if total_warnings > 0:
+        logger.warning("VALIDATION: %d campos contienen marcas de aseguradoras en los playbooks", total_warnings)
+    else:
+        logger.info("VALIDATION: Todos los playbooks están libres de marcas de aseguradoras ✓")
+    
     output = {
         "metadata": {
             "generado": "extract_product_rules.py",
             "total_pdfs": len(pdfs),
             "total_productos": len(playbooks_consolidados),
             "productos_con_pdf": list(productos_vistos),
+            "brand_validation_warnings": total_warnings,
         },
         "productos": playbooks_consolidados,
     }

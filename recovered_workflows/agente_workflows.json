@@ -1,1 +1,300 @@
+<<<<<<< HEAD
 [{"updatedAt":"2026-03-04T23:16:36.466Z","createdAt":"2026-03-01T16:05:26.841Z","id":"pKt8kdlEAt2gkHat","name":"Agente de seguros 0.0.1.","description":null,"active":true,"isArchived":false,"nodes":[{"parameters":{"httpMethod":"POST","path":"ig-inbound","responseMode":"responseNode","options":{}},"type":"n8n-nodes-base.webhook","typeVersion":2.1,"position":[-144,-16],"id":"8908ff5a-65ad-4ab0-85cc-e0ceeb79b4fa","name":"Webhook","webhookId":"a3065e43-7723-4ed3-a6b1-b5bcc6876bec"},{"parameters":{"jsCode":"// n8n Code node\n// Normaliza payloads (simple + Meta) y evita loops.\n\nconst body = $json.body ?? $json;\nconst out = [];\n\nfunction emit({ lead_id, sender_id, text, source, ig_user_id, raw }) {\n  const id = String(lead_id ?? sender_id ?? \"\").trim();\n  const t = String(text ?? \"\").trim();\n  if (!id || !t) return;\n\n  out.push({\n    json: {\n      lead_id: id,\n      text: t,\n      source: source ?? \"instagram_dm\",\n      ig_user_id: ig_user_id ?? null,\n      raw: raw ?? body,\n    },\n  });\n}\n\n/** 1) Payload simple tipo:\n * { lead_id, text, source } o { sender_id, text }\n */\nif ((body.lead_id || body.sender_id) && body.text) {\n  emit({\n    lead_id: body.lead_id,\n    sender_id: body.sender_id,\n    text: body.text,\n    source: body.source,\n    ig_user_id: body.ig_user_id,\n    raw: body,\n  });\n  return out;\n}\n\n/** 2) Formato Meta: entry[] */\nfor (const entry of body.entry || []) {\n  // entry.messaging[]\n  for (const ev of entry.messaging || []) {\n    if (ev.read || ev.delivery) continue;\n    const msg = ev.message || {};\n    if (msg.is_echo || ev.is_echo) continue;\n\n    emit({\n      sender_id: ev.sender?.id,\n      text: msg.text,\n      source: \"instagram_dm\",\n      ig_user_id: ev.sender?.id ?? null,\n      raw: ev,\n    });\n  }\n\n  // entry.changes[] field=\"messages\"\n  for (const ch of entry.changes || []) {\n    if (ch.field !== \"messages\") continue;\n    const v = ch.value || {};\n    if (v.read || v.delivery || v.is_echo) continue;\n    if (v.message?.is_echo) continue;\n\n    emit({\n      sender_id: v.sender?.id || v.from,\n      text: v.message?.text || v.messages?.[0]?.text?.body || v.text?.body || v.text,\n      source: \"instagram_dm\",\n      ig_user_id: v.sender?.id || v.from || null,\n      raw: ch,\n    });\n  }\n}\n\nreturn out;"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[64,-272],"id":"8bba09be-a4b6-43f6-95ca-8cbeae6d032b","name":"Code in JavaScript"},{"parameters":{"method":"POST","url":"http://host.docker.internal:8000/ig/inbound","sendBody":true,"specifyBody":"json","jsonBody":"={\n  \"sender_id\": \"{{$json.sender_id}}\",\n  \"lead_id\": \"{{$json.sender_id}}\",\n  \"text\": \"{{$json.text}}\",\n  \"reply_text\": \"{{$json.reply_text}}\",\n  \"intent\": \"{{$json.intent}}\",\n  \"needs_handoff\": \"{{$json.needs_handoff}}\",\n  \"source\": \"instagram_dm\",\n  \"raw\": \"{{$json.raw}}\"\n}","options":{}},"type":"n8n-nodes-base.httpRequest","typeVersion":4.4,"position":[1248,-384],"id":"9988b059-05ad-4486-8e11-89ee2d5ab797","name":"HTTP Request"},{"parameters":{"mode":"raw","jsonOutput":"{\n  \"lead_id\": \"={{$json.lead_id}}\",\n  \"reply_text\": \"={{$json.reply_text}}\",\n  \"wa_link\": \"={{$json.wa_link}}\",\n  \"stage\": \"={{$json.stage}}\"\n}\n","options":{}},"type":"n8n-nodes-base.set","typeVersion":3.4,"position":[1488,-64],"id":"2f59c8d0-e1a0-4599-b044-dcdf26327be6","name":"Edit Fields"},{"parameters":{"respondWith":"json","responseBody":"{\n  \"ok\": true,\n  \"lead_id\": \"={{$json.lead_id}}\",\n  \"stage\": \"={{$json.stage}}\",\n  \"reply_text\": \"={{$json.reply_text}}\",\n  \"wa_link\": \"={{$json.wa_link}}\"\n}","options":{}},"type":"n8n-nodes-base.respondToWebhook","typeVersion":1.5,"position":[1664,-320],"id":"c6bdfaa1-4c73-4069-955f-7a450d21b00f","name":"Respond to Webhook"},{"parameters":{"conditions":{"options":{"caseSensitive":true,"leftValue":"","typeValidation":"strict","version":3},"conditions":[{"id":"626f909a-1187-4a75-9498-2d04e3b91e22","leftValue":"={{$json.text}}","rightValue":"","operator":{"type":"string","operation":"notEmpty","singleValue":true}},{"id":"19e4d055-80c3-4b5d-be0b-97960ec25047","leftValue":"={{$json.lead_id}}","rightValue":"","operator":{"type":"string","operation":"notEmpty","singleValue":true}}],"combinator":"and"},"options":{}},"type":"n8n-nodes-base.if","typeVersion":2.3,"position":[288,-16],"id":"f1e80d47-0901-4610-9019-23043a631b12","name":"If"},{"parameters":{"respondWith":"json","responseBody":"{\n  \"ok\": false,\n  \"error\": \"text requerido\"\n}","options":{}},"type":"n8n-nodes-base.respondToWebhook","typeVersion":1.5,"position":[1072,32],"id":"530a7f58-0579-42f1-b83f-9e8d7f60c16a","name":"Respond to Webhook1"},{"parameters":{"modelId":{"__rl":true,"value":"gpt-4.1-mini","mode":"list","cachedResultName":"GPT-4.1-MINI"},"responses":{"values":[{"content":"={{$json.text}}"}]},"builtInTools":{},"options":{"instructions":"Eres un agente de seguros en España. Responde en español. Sé claro y breve. Si faltan datos, haz 1-2 preguntas. No inventes coberturas ni precios. Si el usuario pide contratar, pide nombre, edad, ciudad y qué busca (salud/vida). Devuelve solo el texto final para enviar por DM.","maxTokens":150,"metadata":"{\n  \"lead_id\": \"={{$json.lead_id}}\",\n  \"sender_id\": \"={{$json.sender_id}}\",\n  \"source\": \"={{$json.source}}\"\n}","textFormat":{"textOptions":{"type":"json_schema","schema":"{\n  \"type\": \"object\",\n  \"properties\": {\n    \"reply_text\": { \"type\": \"string\" },\n    \"intent\": { \"type\": \"string\" },\n    \"needs_handoff\": { \"type\": \"boolean\" },\n    \"lead\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"name\": { \"type\": [\"string\", \"null\"] },\n        \"phone\": { \"type\": [\"string\", \"null\"] },\n        \"email\": { \"type\": [\"string\", \"null\"] },\n        \"city\": { \"type\": [\"string\", \"null\"] },\n        \"product_interest\": { \"type\": [\"string\", \"null\"] }\n      },\n      \"required\": [\"name\", \"phone\", \"email\", \"city\", \"product_interest\"],\n      \"additionalProperties\": false\n    }\n  },\n  \"required\": [\"reply_text\", \"intent\", \"needs_handoff\", \"lead\"],\n  \"additionalProperties\": false\n}"}},"temperature":0.2}},"type":"@n8n/n8n-nodes-langchain.openAi","typeVersion":2.1,"position":[528,-224],"id":"22ab2c21-bff7-4af8-9ae9-8fcde6e8038e","name":"Message a model","credentials":{"openAiApi":{"id":"jDlxLxsj5eQ06jdz","name":"OpenAi account"}}},{"parameters":{"jsCode":"const content =\n  $json.message?.content ??\n  $json.data?.choices?.[0]?.message?.content ??\n  $json.text ??\n  \"\";\n\nlet nlp = null;\ntry { nlp = JSON.parse(content); } catch (e) { nlp = null; }\n\nreturn [{\n  json: {\n    sender_id: $json.sender_id,\n    text: $json.text,\n    source: $json.source,\n    raw: $json.raw,\n    nlp\n  }\n}];"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[896,-256],"id":"d62006ad-3894-4617-8ea1-6c8f62ca79d1","name":"Parse OpenAI JSON"}],"connections":{"Webhook":{"main":[[{"node":"Code in JavaScript","type":"main","index":0}]]},"Code in JavaScript":{"main":[[{"node":"If","type":"main","index":0}]]},"HTTP Request":{"main":[[{"node":"Edit Fields","type":"main","index":0}]]},"Edit Fields":{"main":[[{"node":"Respond to Webhook","type":"main","index":0}]]},"If":{"main":[[{"node":"Message a model","type":"main","index":0}],[{"node":"Respond to Webhook1","type":"main","index":0}]]},"Message a model":{"main":[[{"node":"Parse OpenAI JSON","type":"main","index":0}]]},"Parse OpenAI JSON":{"main":[[{"node":"HTTP Request","type":"main","index":0}]]}},"settings":{"executionOrder":"v1","binaryMode":"separate","availableInMCP":true},"staticData":null,"meta":{"templateCredsSetupCompleted":true},"pinData":{},"versionId":"42385588-5e4a-46fc-97d1-8d101b75df3d","activeVersionId":"a899890b-1ab4-4e3c-bba4-c32d6f5ab035","versionCounter":158,"triggerCount":1,"tags":[],"shared":[{"updatedAt":"2026-03-01T16:05:26.847Z","createdAt":"2026-03-01T16:05:26.847Z","role":"workflow:owner","workflowId":"pKt8kdlEAt2gkHat","projectId":"DoFQP3345xwILg5p","project":{"updatedAt":"2026-03-01T15:59:11.629Z","createdAt":"2026-03-01T15:55:10.654Z","id":"DoFQP3345xwILg5p","name":"Sebastian Sifontes <sebastiansvsv@gmail.com>","type":"personal","icon":null,"description":null,"creatorId":"102873a4-1e14-4ec3-b88c-60567be30721"}}],"versionMetadata":{"name":null,"description":null}}]
+=======
+{
+  "name": "Agente de seguros 0.0.1.",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ig-inbound",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -144,
+        -16
+      ],
+      "id": "8908ff5a-65ad-4ab0-85cc-e0ceeb79b4fa",
+      "name": "Webhook",
+      "webhookId": "a3065e43-7723-4ed3-a6b1-b5bcc6876bec"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node\n// Normaliza payloads (simple + Meta) y evita loops.\n\nconst body = $json.body ?? $json;\nconst out = [];\n\nfunction emit({ lead_id, sender_id, text, source, ig_user_id, raw }) {\n  const id = String(lead_id ?? sender_id ?? \"\").trim();\n  const t = String(text ?? \"\").trim();\n  if (!id || !t) return;\n\n  out.push({\n    json: {\n      lead_id: id,\n      text: t,\n      source: source ?? \"instagram_dm\",\n      ig_user_id: ig_user_id ?? null,\n      raw: raw ?? body,\n    },\n  });\n}\n\n/** 1) Payload simple tipo:\n * { lead_id, text, source } o { sender_id, text }\n */\nif ((body.lead_id || body.sender_id) && body.text) {\n  emit({\n    lead_id: body.lead_id,\n    sender_id: body.sender_id,\n    text: body.text,\n    source: body.source,\n    ig_user_id: body.ig_user_id,\n    raw: body,\n  });\n  return out;\n}\n\n/** 2) Formato Meta: entry[] */\nfor (const entry of body.entry || []) {\n  // entry.messaging[]\n  for (const ev of entry.messaging || []) {\n    if (ev.read || ev.delivery) continue;\n    const msg = ev.message || {};\n    if (msg.is_echo || ev.is_echo) continue;\n\n    emit({\n      sender_id: ev.sender?.id,\n      text: msg.text,\n      source: \"instagram_dm\",\n      ig_user_id: ev.sender?.id ?? null,\n      raw: ev,\n    });\n  }\n\n  // entry.changes[] field=\"messages\"\n  for (const ch of entry.changes || []) {\n    if (ch.field !== \"messages\") continue;\n    const v = ch.value || {};\n    if (v.read || v.delivery || v.is_echo) continue;\n    if (v.message?.is_echo) continue;\n\n    emit({\n      sender_id: v.sender?.id || v.from,\n      text: v.message?.text || v.messages?.[0]?.text?.body || v.text?.body || v.text,\n      source: \"instagram_dm\",\n      ig_user_id: v.sender?.id || v.from || null,\n      raw: ch,\n    });\n  }\n}\n\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        64,
+        -272
+      ],
+      "id": "8bba09be-a4b6-43f6-95ca-8cbeae6d032b",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/ig/inbound",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"sender_id\": \"{{$json.sender_id}}\",\n  \"lead_id\": \"{{$json.sender_id}}\",\n  \"text\": \"{{$json.text}}\",\n  \"reply_text\": \"{{$json.reply_text}}\",\n  \"intent\": \"{{$json.intent}}\",\n  \"needs_handoff\": \"{{$json.needs_handoff}}\",\n  \"source\": \"instagram_dm\",\n  \"raw\": \"{{$json.raw}}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1248,
+        -384
+      ],
+      "id": "9988b059-05ad-4486-8e11-89ee2d5ab797",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"lead_id\": \"={{$json.lead_id}}\",\n  \"reply_text\": \"={{$json.reply_text}}\",\n  \"wa_link\": \"={{$json.wa_link}}\",\n  \"stage\": \"={{$json.stage}}\"\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1488,
+        -64
+      ],
+      "id": "2f59c8d0-e1a0-4599-b044-dcdf26327be6",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"ok\": true,\n  \"lead_id\": \"={{$json.lead_id}}\",\n  \"stage\": \"={{$json.stage}}\",\n  \"reply_text\": \"={{$json.reply_text}}\",\n  \"wa_link\": \"={{$json.wa_link}}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1664,
+        -320
+      ],
+      "id": "c6bdfaa1-4c73-4069-955f-7a450d21b00f",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "626f909a-1187-4a75-9498-2d04e3b91e22",
+              "leftValue": "={{$json.text}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "19e4d055-80c3-4b5d-be0b-97960ec25047",
+              "leftValue": "={{$json.lead_id}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        288,
+        -16
+      ],
+      "id": "f1e80d47-0901-4610-9019-23043a631b12",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"ok\": false,\n  \"error\": \"text requerido\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1072,
+        32
+      ],
+      "id": "530a7f58-0579-42f1-b83f-9e8d7f60c16a",
+      "name": "Respond to Webhook1"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "={{$json.text}}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "instructions": "Eres un agente de seguros en España. Responde en español. Sé claro y breve. Si faltan datos, haz 1-2 preguntas. No inventes coberturas ni precios. Si el usuario pide contratar, pide nombre, edad, ciudad y qué busca (salud/vida). Devuelve solo el texto final para enviar por DM.",
+          "maxTokens": 150,
+          "metadata": "{\n  \"lead_id\": \"={{$json.lead_id}}\",\n  \"sender_id\": \"={{$json.sender_id}}\",\n  \"source\": \"={{$json.source}}\"\n}",
+          "textFormat": {
+            "textOptions": {
+              "type": "json_schema",
+              "schema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"reply_text\": { \"type\": \"string\" },\n    \"intent\": { \"type\": \"string\" },\n    \"needs_handoff\": { \"type\": \"boolean\" },\n    \"lead\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"name\": { \"type\": [\"string\", \"null\"] },\n        \"phone\": { \"type\": [\"string\", \"null\"] },\n        \"email\": { \"type\": [\"string\", \"null\"] },\n        \"city\": { \"type\": [\"string\", \"null\"] },\n        \"product_interest\": { \"type\": [\"string\", \"null\"] }\n      },\n      \"required\": [\"name\", \"phone\", \"email\", \"city\", \"product_interest\"],\n      \"additionalProperties\": false\n    }\n  },\n  \"required\": [\"reply_text\", \"intent\", \"needs_handoff\", \"lead\"],\n  \"additionalProperties\": false\n}"
+            }
+          },
+          "temperature": 0.2
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        528,
+        -224
+      ],
+      "id": "22ab2c21-bff7-4af8-9ae9-8fcde6e8038e",
+      "name": "Message a model",
+      "credentials": {
+        "openAiApi": {
+          "id": "jDlxLxsj5eQ06jdz",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const content =\n  $json.message?.content ??\n  $json.data?.choices?.[0]?.message?.content ??\n  $json.text ??\n  \"\";\n\nlet nlp = null;\ntry { nlp = JSON.parse(content); } catch (e) { nlp = null; }\n\nreturn [{\n  json: {\n    sender_id: $json.sender_id,\n    text: $json.text,\n    source: $json.source,\n    raw: $json.raw,\n    nlp\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        -256
+      ],
+      "id": "d62006ad-3894-4617-8ea1-6c8f62ca79d1",
+      "name": "Parse OpenAI JSON"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond to Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Parse OpenAI JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse OpenAI JSON": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "staticData": {},
+  "pinData": {},
+  "versionId": "42385588-5e4a-46fc-97d1-8d101b75df3d",
+  "triggerCount": 1,
+  "createdAt": "2026-03-01 16:05:26.841",
+  "updatedAt": "2026-03-04 23:16:36.466"
+}
+>>>>>>> 1ee85cd0 (feat: sistema completo de gestión de leads, playbooks, WhatsApp Cloud API, dashboard y evaluador)
