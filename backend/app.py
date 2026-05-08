@@ -128,6 +128,11 @@ META_BLOCKED_TTL_S       = 3600
 FOLLOWUP_DELAY_HOURS     = 2
 FOLLOWUP_MAX_ATTEMPTS    = 2
 
+# Google Calendar (opcional)
+GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "")
+GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+_HAS_GCAL = bool(GOOGLE_CALENDAR_ID and GOOGLE_SERVICE_ACCOUNT_JSON)
+
 # Anti-spam / rate limit
 _RATE_LIMIT: Dict[str, List[float]] = {}
 RATE_LIMIT_WINDOW_S      = 10
@@ -343,9 +348,10 @@ def bootstrap_schema() -> None:
                 ddl_indexes,
             ):
                 cur.execute(ddl)
-            # Migration check: add ab_version and scoring columns if missing
+            # Migration check: add ab_version, scoring, and followup columns if missing
             try:
                 cur.execute("ALTER TABLE conversation_state ADD COLUMN IF NOT EXISTS ab_version VARCHAR(10) DEFAULT 'A'")
+                cur.execute("ALTER TABLE conversation_state ADD COLUMN IF NOT EXISTS followup_attempts INT DEFAULT 0")
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_score SMALLINT DEFAULT 0")
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS temp_tag VARCHAR(20) DEFAULT 'cold'")
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS closure_prob DECIMAL(3,2) DEFAULT 0.00")
@@ -612,25 +618,41 @@ def _check_datos_minimos_completos(ls: dict) -> bool:
 
 
 def _notify_human_handoff(lead_id: str, ls: dict, ultimo_texto: str, sender_id: str) -> None:
-    """
-    Envía un WhatsApp a Rosa/Sebastián (34603448765) cuando un lead
-    está listo para asesoría humana.
-    """
+    """Notifica a los agentes humanos con un resumen limpio del lead."""
+    slots = load_state(lead_id).get("slots", {})
     datos = ls.get("datos_recogidos", {})
-    producto = ls.get("producto_detectado", "no detectado")
+    temp_tag = ls.get("temp_tag", "no evaluado")
+    
+    nombre = slots.get("name") or datos.get("nombre") or "no indicado"
+    producto = ls.get("producto_detectado") or slots.get("product_interest") or "no detectado"
+    provincia = slots.get("province") or datos.get("codigo_postal") or "no indicada"
+    num_people = slots.get("num_people") or datos.get("num_asegurados") or "no indicado"
+    ages = slots.get("ages") or datos.get("edad") or "no indicadas"
+    copay = slots.get("copay_preference") or "no indicado"
+    preex = slots.get("has_preexisting")
+    preex_str = "sí" if preex is True else ("no" if preex is False else "no indicado")
+    turnos = ls.get("mensajes_intercambiados", 0)
     
     mensaje = (
-        "\U0001f514 Lead listo para asesoría\n"
-        f"Nombre: {datos.get('nombre', '?')}\n"
-        f"Producto: {producto}\n"
-        f"Datos: {json.dumps(datos, ensure_ascii=False)}\n"
-        f"Último mensaje: {ultimo_texto[:100]}\n"
-        f"Responder: wa.me/{sender_id}"
+        f"🔔 LEAD LISTO — Valentín Protección Integral\n\n"
+        f"👤 Nombre: {nombre}\n"
+        f"📦 Producto: {producto}\n"
+        f"🌡️ Score: {temp_tag}\n"
+        f"📍 Zona: {provincia}\n"
+        f"👥 Personas: {num_people}\n"
+        f"🎂 Edades: {ages}\n"
+        f"💶 Copago: {copay}\n"
+        f"🩺 Preexistencias: {preex_str}\n"
+        f"💬 Último mensaje: \"{ultimo_texto[:120]}\"\n"
+        f"📊 Turnos: {turnos}\n\n"
+        f"👉 Responder: wa.me/{sender_id}"
     )
     
+    logger.info("HANDOFF_NOTIFY lead=%s\n%s", lead_id, mensaje)
+    
     try:
-        _meta_send_wa("34603448765", mensaje)
-        logger.info("HANDOFF_NOTIFIED lead=%s to=34603448765", lead_id)
+        _meta_send_wa(DEFAULT_WA_PHONE_E164, mensaje)
+        logger.info("HANDOFF_NOTIFIED lead=%s to=%s", lead_id, DEFAULT_WA_PHONE_E164)
     except Exception as e:
         logger.error("HANDOFF_NOTIFY_ERR lead=%s %s", lead_id, e)
 
@@ -1325,6 +1347,85 @@ def _extract_ages(text: str, state: Optional[dict] = None) -> Optional[List[int]
             return None
     return ages
 
+def auto_detect_product(text: str) -> Optional[str]:
+    """Detecta producto implícito aunque el cliente no lo nombre directamente."""
+    t = nt(text)
+    mapeos = [
+        (r"\b(hijos|familia|niños|mis hijos|para todos|para la familia)\b", "salud"),
+        (r"\b(hipoteca|si me pasa algo|dejar cubierta|fallecimiento|herencia)\b", "vida"),
+        (r"\b(perro|gato|mascota|animal|gatito|perrito)\b", "mascotas"),
+        (r"\b(viaje|vacaciones|vuelo|extranjero|viajar)\b", "viaje"),
+        (r"\b(negocio|empresa|autónomo|autonomo|local|taller|oficina|pyme)\b", "negocios"),
+        (r"\b(dientes|dentista|ortodoncia|boca|muela|muelas|blanqueamiento)\b", "dental"),
+        (r"\b(nie|tie|visado|residencia|extranjero|tarjeta roja|arraigo)\b", "salud_extranjeros"),
+    ]
+    for pattern, producto in mapeos:
+        if re.search(pattern, t):
+            return producto
+    return None
+
+
+def detect_language(text: str) -> str:
+    """Detecta si el texto está en inglés o español."""
+    t = nt(text)
+    english_signals = ["i", "need", "want", "health", "insurance", "how", "much", 
+                       "cost", "visa", "nie", "residence", "spain", "coverage", 
+                       "policy", "quote", "price"]
+    count = sum(1 for word in english_signals if word in t)
+    return "en" if count >= 2 else "es"
+
+
+def propose_call_slots() -> list[str]:
+    """Devuelve los próximos 3 huecos disponibles en horario laboral."""
+    if not _HAS_GCAL:
+        return []
+    now = datetime.now()
+    slots = []
+    candidate = now + timedelta(hours=2)
+    candidate = candidate.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    
+    while len(slots) < 3:
+        weekday = candidate.weekday()
+        hour = candidate.hour
+        if weekday < 5:
+            if 9 <= hour < 14 or 16 <= hour < 19:
+                dia = "Hoy" if candidate.date() == now.date() else "Mañana" if candidate.date() == (now + timedelta(days=1)).date() else candidate.strftime("%A")
+                slots.append(f"{dia} a las {candidate.strftime('%H:%M')}")
+        candidate += timedelta(hours=1)
+    
+    return slots[:3]
+
+
+def create_calendar_event(slot: datetime, lead_name: str, lead_phone: str) -> bool:
+    """Crea un evento en Google Calendar."""
+    if not _HAS_GCAL:
+        return False
+    try:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        
+        import json
+        creds_dict = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict, scopes=["https://www.googleapis.com/auth/calendar"]
+        )
+        service = build("calendar", "v3", credentials=creds)
+        
+        event = {
+            "summary": f"Llamada {lead_name or 'Lead'} — Valentín Protección Integral",
+            "description": f"Lead: {lead_phone}\nNombre: {lead_name}",
+            "start": {"dateTime": slot.isoformat(), "timeZone": "Europe/Madrid"},
+            "end": {"dateTime": (slot + timedelta(minutes=15)).isoformat(), "timeZone": "Europe/Madrid"},
+            "reminders": {"useDefault": False, "overrides": [{"method": "popup", "minutes": 30}]},
+        }
+        service.events().insert(calendarId=GOOGLE_CALENDAR_ID, body=event).execute()
+        logger.info("GCAL_EVENT_CREATED lead=%s slot=%s", lead_phone, slot.isoformat())
+        return True
+    except Exception as e:
+        logger.error("GCAL_ERROR lead=%s err=%s", lead_phone, e)
+        return False
+
+
 def _extract_product(text: str, state: Optional[dict] = None) -> Optional[str]:
     t = nt(text).strip()
     in_product_step = bool(state and state.get("mode") == "insurance" and state.get("step") == "product_interest")
@@ -1739,18 +1840,85 @@ def verify_meta_signature(raw_body: bytes, sig256: str, sig1: str) -> bool:
         return hmac.compare_digest(hmac.new(secret, msg=raw_body, digestmod=hashlib.sha1).hexdigest(), recv)
     return False
 
-def _process_document_ocr(image_url: str) -> str:
-    """Extrae texto de una imagen enviada por el cliente usando Tesseract local."""
+def extract_text_from_wa_image(media_id: str) -> Optional[str]:
+    """Descarga una imagen de WhatsApp y extrae texto con Tesseract."""
+    if not _HAS_TESSERACT or not _HAS_PIL:
+        logger.warning("TESSERACT_NOT_AVAILABLE _HAS_TESSERACT=%s _HAS_PIL=%s", _HAS_TESSERACT, _HAS_PIL)
+        return None
     try:
+        token = META_WA_TOKEN or META_ACCESS_TOKEN
+        if not token:
+            logger.warning("WA_IMAGE_NO_TOKEN")
+            return None
+        url = f"https://graph.facebook.com/v19.0/{media_id}?access_token={token}"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code != 200:
+            data = resp.json()
+            img_url = data.get("url") or data.get("media", {}).get("url", "")
+            if not img_url:
+                logger.error("WA_IMAGE_NO_URL media_id=%s", media_id)
+                return None
+            resp = requests.get(f"{img_url}?access_token={token}", timeout=10)
+            if resp.status_code != 200:
+                logger.error("WA_IMAGE_DOWNLOAD_FAIL media_id=%s status=%s", media_id, resp.status_code)
+                return None
+        
         pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
-        response = requests.get(image_url, timeout=10)
-        img = Image.open(BytesIO(response.content))
-        text = pytesseract.image_to_string(img, lang='spa')
-        logger.info("OCR_SUCCESS: Texto extraído (len=%d)", len(text))
-        return text
+        img = Image.open(BytesIO(resp.content))
+        text = pytesseract.image_to_string(img, lang='spa+eng')
+        result = text.strip()
+        logger.info("OCR_SUCCESS media_id=%s len=%d", media_id, len(result))
+        return result if result else None
     except Exception as e:
-        logger.error("OCR_ERROR: %s", e)
-        return ""
+        logger.error("OCR_ERROR media_id=%s err=%s", media_id, e)
+        return None
+
+
+def send_followup_if_needed(lead_id: str) -> bool:
+    """Envía un follow-up automático si han pasado más de FOLLOWUP_DELAY_HOURS."""
+    try:
+        ls = load_lead_state(lead_id)
+        state = load_state(lead_id)
+        
+        if flow_is_complete(state.get("slots", {})):
+            return False
+        
+        followup_attempts = state.get("followup_attempts", 0)
+        if followup_attempts >= FOLLOWUP_MAX_ATTEMPTS:
+            return False
+        
+        ultimo = ls.get("ultimo_mensaje")
+        if not ultimo:
+            return False
+        now = datetime.now()
+        if hasattr(ultimo, 'tzinfo') and ultimo.tzinfo:
+            now = datetime.now(tz=ultimo.tzinfo)
+        horas = (now - ultimo).total_seconds() / 3600
+        if horas < FOLLOWUP_DELAY_HOURS:
+            return False
+        
+        nombre = state.get("slots", {}).get("name") or ls.get("datos_recogidos", {}).get("nombre")
+        if nombre:
+            msg = f"Hola {nombre}, solo quería saber si pudimos ayudarte con lo del seguro. Si tienes alguna duda o quieres que sigamos, aquí estamos 😊"
+        else:
+            msg = "Hola, quedamos a medias antes. Si tienes dudas o quieres que sigamos con tu consulta, aquí estamos cuando quieras 😊"
+        
+        sender_id = state.get("ig_user_id", "")
+        if sender_id:
+            _meta_send_wa(sender_id, msg)
+        
+        state["followup_attempts"] = followup_attempts + 1
+        state["wa_sent_at"] = datetime.now()
+        save_state(lead_id, state)
+        
+        ls["notas"].append(f"Follow-up #{followup_attempts + 1} enviado")
+        save_lead_state(lead_id, ls)
+        
+        logger.info("FOLLOWUP_SENT lead=%s attempt=%d/%d", lead_id, followup_attempts + 1, FOLLOWUP_MAX_ATTEMPTS)
+        return True
+    except Exception as e:
+        logger.error("FOLLOWUP_ERROR lead=%s err=%s", lead_id, e)
+        return False
 
 def _queue_lead_for_salesforce(lead_id: str, company_tag: str = "default"):
     """Guarda el lead en una tabla de cola para Salesforce. Solución temporal sin AI."""
@@ -1887,6 +2055,38 @@ def update_lead_scoring(lead_id: str, score: int, tag: str, prob: float):
                 (score, tag, prob, lead_id)
             )
         conn.commit()
+
+
+def score_intent(text: str, slots: dict, turn_count: int) -> str:
+    """
+    Clasifica la intención del lead como 'frio', 'templado' o 'caliente'.
+    """
+    t = nt(text)
+    
+    # CALIENTE
+    caliente_palabras = ["contratar", "me interesa", "cuánto vale", "cuanto vale", 
+                         "quiero empezar", "cómo lo hago", "como lo hago",
+                         "necesito para ya", "urgente", "para esta semana"]
+    if any(p in t for p in caliente_palabras):
+        return "caliente"
+    
+    slots_rellenados = sum(1 for v in slots.values() if v is not None)
+    if slots_rellenados >= 3:
+        return "caliente"
+    if turn_count > 4:
+        return "caliente"
+    
+    # TEMPLADO
+    if re.search(r"\b(precio|cuanto|cuánto|presupuesto|cuesta|cuestan)\b", t):
+        return "templado"
+    if 1 <= slots_rellenados <= 2:
+        return "templado"
+    productos_mencionados = ["salud", "vida", "dental", "mascotas", "hogar", "viaje", "negocios", "accidentes", "decesos"]
+    if any(p in t for p in productos_mencionados):
+        return "templado"
+    
+    # FRÍO
+    return "frio"
 
 
 def _is_rate_limited(sender_id: str) -> bool:
@@ -2964,6 +3164,170 @@ def kb_search(q: str, category: str = "salud", top_k: int = 5):
             for r in rows
         ]
     }
+
+@app.get("/admin")
+def admin_dashboard(request: FastAPIRequest):
+    """Panel de administración interno con métricas."""
+    token = request.headers.get("X-Admin-Token", "")
+    if KB_ADMIN_TOKEN and token != KB_ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Acceso denegado")
+    
+    try:
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT fase, COUNT(*) FROM lead_state GROUP BY fase ORDER BY fase")
+                fases = cur.fetchall()
+                
+                cur.execute("SELECT temp_tag, COUNT(*) FROM leads GROUP BY temp_tag")
+                scores = cur.fetchall()
+                
+                cur.execute("SELECT AVG(mensajes_intercambiados) FROM lead_state WHERE fase = 'listo_para_humano'")
+                avg_msgs = cur.fetchone()[0] or 0
+                
+                cur.execute("""
+                    SELECT ls.lead_id, ls.fase, ls.producto_detectado, 
+                           ls.mensajes_intercambiados, ls.ultimo_mensaje
+                    FROM lead_state ls
+                    ORDER BY ls.updated_at DESC LIMIT 10
+                """)
+                ultimos = cur.fetchall()
+                
+                try:
+                    cur.execute("SELECT AVG(score), MIN(score), MAX(score), COUNT(*) FROM conversation_scores")
+                    eval_stats = cur.fetchone()
+                except Exception:
+                    eval_stats = (0, 0, 0, 0)
+                
+                try:
+                    cur.execute("""
+                        SELECT cs.ab_version, COUNT(*) as leads,
+                               SUM(CASE WHEN ls.fase='listo_para_humano' THEN 1 ELSE 0 END) as convertidos
+                        FROM conversation_state cs
+                        JOIN lead_state ls ON cs.lead_id = ls.lead_id
+                        GROUP BY cs.ab_version
+                    """)
+                    ab_data = cur.fetchall()
+                except Exception:
+                    ab_data = []
+    except Exception as e:
+        return HTMLResponse(f"<h1>Error</h1><p>{e}</p>", status_code=500)
+    
+    rows_fases = "".join(f"<tr><td>{r[0]}</td><td>{r[1]}</td></tr>" for r in fases)
+    rows_scores = "".join(f"<tr><td>{r[0]}</td><td>{r[1]}</td></tr>" for r in scores)
+    rows_ultimos = "".join(
+        f"<tr><td>{str(r[0])[:8]}...</td><td>{r[1]}</td><td>{r[2] or '-'}</td><td>{r[3]}</td><td>{str(r[4] or '')[:30]}</td></tr>"
+        for r in ultimos
+    )
+    rows_ab = "".join(
+        f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td><td>{round(r[2]/r[1]*100, 1) if r[1] > 0 else 0}%</td></tr>"
+        for r in ab_data
+    )
+    
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><title>Admin — Valentín Protección Integral</title>
+<style>
+body {{ font-family: -apple-system, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #fff; color: #333; }}
+h1 {{ color: #1a3a5c; border-bottom: 2px solid #c8a96e; padding-bottom: 10px; }}
+h2 {{ color: #1a3a5c; margin-top: 30px; }}
+table {{ border-collapse: collapse; width: 100%; margin: 10px 0 20px; }}
+th, td {{ border: 1px solid #ddd; padding: 8px 12px; text-align: left; }}
+th {{ background: #1a3a5c; color: white; }}
+tr:nth-child(even) {{ background: #f8f9fa; }}
+.stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }}
+.stat-card {{ background: #f0f2f5; border-radius: 8px; padding: 15px; text-align: center; }}
+.stat-card .num {{ font-size: 2em; font-weight: bold; color: #1a3a5c; }}
+.stat-card .label {{ font-size: 0.9em; color: #666; }}
+</style>
+</head>
+<body>
+<h1>📊 Panel de Administración</h1>
+<p>Valentín Protección Integral — Agentes de Seguros Vinculados</p>
+<div class="stats">
+<div class="stat-card"><div class="num">{avg_msgs:.1f}</div><div class="label">Mensajes promedio hasta cierre</div></div>
+<div class="stat-card"><div class="num">{eval_stats[3]}</div><div class="label">Conversaciones evaluadas</div></div>
+<div class="stat-card"><div class="num">{eval_stats[0] or 0:.1f}</div><div class="label">Score promedio evaluador</div></div>
+</div>
+<h2>📋 Leads por Fase</h2>
+<table><tr><th>Fase</th><th>Count</th></tr>{rows_fases}</table>
+<h2>🌡️ Score Distribution</h2>
+<table><tr><th>Tag</th><th>Count</th></tr>{rows_scores}</table>
+<h2>🧪 A/B Testing</h2>
+<table><tr><th>Versión</th><th>Leads</th><th>Convertidos</th><th>Tasa %</th></tr>{rows_ab}</table>
+<h2>🕐 Últimos 10 Leads</h2>
+<table><tr><th>Lead ID</th><th>Fase</th><th>Producto</th><th>Mensajes</th><th>Último mensaje</th></tr>{rows_ultimos}</table>
+<h2>📈 Evaluador</h2>
+<table><tr><th>Métrica</th><th>Valor</th></tr>
+<tr><td>Score promedio</td><td>{eval_stats[0] or 0:.2f}</td></tr>
+<tr><td>Score mínimo</td><td>{eval_stats[1] or 0}</td></tr>
+<tr><td>Score máximo</td><td>{eval_stats[2] or 0}</td></tr>
+<tr><td>Total evaluaciones</td><td>{eval_stats[3]}</td></tr>
+</table>
+</body></html>"""
+    
+    return HTMLResponse(html)
+
+
+@app.get("/admin/evaluations")
+def admin_evaluations(request: FastAPIRequest):
+    """Devuelve las últimas 50 evaluaciones. Protegido con KB_ADMIN_TOKEN."""
+    token = request.headers.get("X-Admin-Token", "")
+    if KB_ADMIN_TOKEN and token != KB_ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Acceso denegado")
+    try:
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT lead_id, score, turnos_total, turnos_hasta_producto, 
+                           turnos_hasta_datos, fase_final, evaluated_at
+                    FROM conversation_scores
+                    ORDER BY evaluated_at DESC LIMIT 50
+                """)
+                rows = cur.fetchall()
+        return {
+            "ok": True,
+            "evaluations": [
+                {
+                    "lead_id": str(r[0]),
+                    "score": r[1],
+                    "turnos_total": r[2],
+                    "turnos_hasta_producto": r[3],
+                    "turnos_hasta_datos": r[4],
+                    "fase_final": r[5],
+                    "evaluated_at": str(r[6]),
+                }
+                for r in rows
+            ]
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/internal/run-followups")
+def run_followups(request: FastAPIRequest):
+    """Recorre todos los leads con flujo incompleto y aplica follow-up."""
+    token = request.headers.get("X-Admin-Token", "")
+    if KB_ADMIN_TOKEN and token != KB_ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Acceso denegado")
+    try:
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT cs.lead_id FROM conversation_state cs
+                    JOIN lead_state ls ON cs.lead_id = ls.lead_id
+                    WHERE cs.mode = 'insurance'
+                    AND cs.step NOT IN ('completed')
+                    AND ls.fase NOT IN ('cerrado', 'listo_para_humano')
+                """)
+                leads = cur.fetchall()
+        sent = 0
+        for (lead_id,) in leads:
+            if send_followup_if_needed(lead_id):
+                sent += 1
+        return {"ok": True, "processed": len(leads), "sent": sent}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 
 @app.post("/kb/ingest")
 def kb_ingest(token: str = ""):
