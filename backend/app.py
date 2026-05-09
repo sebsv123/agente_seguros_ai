@@ -14,7 +14,7 @@ Incluye:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import hmac
 import json
@@ -46,6 +46,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 from urllib.error import HTTPError
 from urllib.request import Request as URequest, urlopen
+
+from system_prompt import get_system_prompt
 
 import psycopg
 from dotenv import load_dotenv
@@ -102,7 +104,7 @@ GROQ_MODEL              = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 WA_TOKEN                = os.getenv("WA_TOKEN", "")
 WA_PHONE_NUMBER_ID      = os.getenv("WA_PHONE_NUMBER_ID", "")
 META_WA_TOKEN           = os.getenv("META_WA_TOKEN", "")
-TESSERACT_PATH          = r"C:\Users\Sebitas\Downloads\tesseract-5.5.2\tesseract-5.5.2\tesseract.exe"
+TESSERACT_PATH          = os.getenv("TESSERACT_PATH", "/usr/bin/tesseract")
 
 # KB / RAG
 KB_SCORE_THRESHOLD      = float(os.getenv("KB_SCORE_THRESHOLD", "0.55"))
@@ -120,12 +122,12 @@ LEAD_UUID_NAMESPACE      = uuid.UUID("4c1f6a2d-8a93-4b8e-8a3b-6e2ce0fb3e31")
 IG_UUID_NAMESPACE        = uuid.UUID("2f8b6b0b-7bfe-4d3b-8c2f-13df1d4c7d10")
 
 AGENT_NAME               = "Rosa"
-LAG_MIN_S                = 1.5
-LAG_MAX_S                = 3.5
+LAG_MIN_S                = 4.0
+LAG_MAX_S                = 12.0
 WA_COOLDOWN_HOURS        = 6
 NON_INS_TURNS_THRESHOLD  = 2
 META_BLOCKED_TTL_S       = 3600
-FOLLOWUP_DELAY_HOURS     = 2
+FOLLOWUP_DELAY_HOURS     = 48
 FOLLOWUP_MAX_ATTEMPTS    = 2
 
 # Google Calendar (opcional)
@@ -348,13 +350,14 @@ def bootstrap_schema() -> None:
                 ddl_indexes,
             ):
                 cur.execute(ddl)
-            # Migration check: add ab_version, scoring, and followup columns if missing
+            # Migration check: add ab_version, scoring, followup, and human_released columns if missing
             try:
                 cur.execute("ALTER TABLE conversation_state ADD COLUMN IF NOT EXISTS ab_version VARCHAR(10) DEFAULT 'A'")
                 cur.execute("ALTER TABLE conversation_state ADD COLUMN IF NOT EXISTS followup_attempts INT DEFAULT 0")
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_score SMALLINT DEFAULT 0")
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS temp_tag VARCHAR(20) DEFAULT 'cold'")
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS closure_prob DECIMAL(3,2) DEFAULT 0.00")
+                cur.execute("ALTER TABLE lead_state ADD COLUMN IF NOT EXISTS human_released BOOLEAN DEFAULT FALSE")
             except Exception:
                 pass
         conn.commit()
@@ -512,6 +515,7 @@ LEAD_STATE_DEFAULT = {
     "mensajes_intercambiados": 0,
     "ultimo_mensaje": None,
     "derivado_a_humano": False,
+    "human_released": False,
     "notas": [],
 }
 
@@ -533,7 +537,7 @@ def load_lead_state(lead_id: str) -> dict:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT fase, producto_detectado, datos_recogidos, mensajes_intercambiados, "
-                "ultimo_mensaje, derivado_a_humano, notas "
+                "ultimo_mensaje, derivado_a_humano, human_released, notas "
                 "FROM lead_state WHERE lead_id = %s",
                 (lead_id,),
             )
@@ -546,7 +550,8 @@ def load_lead_state(lead_id: str) -> dict:
             "mensajes_intercambiados": int(row[3] or 0),
             "ultimo_mensaje": row[4],
             "derivado_a_humano": bool(row[5]),
-            "notas": _safe_json(row[6]) or [],
+            "human_released": bool(row[6]) if len(row) > 6 else False,
+            "notas": _safe_json(row[7]) or [],
         }
     return dict(LEAD_STATE_DEFAULT)
 
@@ -559,8 +564,9 @@ def save_lead_state(lead_id: str, ls: dict) -> None:
                 """
                 INSERT INTO lead_state
                     (lead_id, fase, producto_detectado, datos_recogidos,
-                     mensajes_intercambiados, ultimo_mensaje, derivado_a_humano, notas, updated_at)
-                VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, now())
+                     mensajes_intercambiados, ultimo_mensaje, derivado_a_humano,
+                     human_released, notas, updated_at)
+                VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s::jsonb, now())
                 ON CONFLICT (lead_id) DO UPDATE SET
                     fase = EXCLUDED.fase,
                     producto_detectado = EXCLUDED.producto_detectado,
@@ -568,6 +574,7 @@ def save_lead_state(lead_id: str, ls: dict) -> None:
                     mensajes_intercambiados = EXCLUDED.mensajes_intercambiados,
                     ultimo_mensaje = EXCLUDED.ultimo_mensaje,
                     derivado_a_humano = EXCLUDED.derivado_a_humano,
+                    human_released = EXCLUDED.human_released,
                     notas = EXCLUDED.notas,
                     updated_at = now()
                 """,
@@ -579,6 +586,7 @@ def save_lead_state(lead_id: str, ls: dict) -> None:
                     ls.get("mensajes_intercambiados", 0),
                     ls.get("ultimo_mensaje"),
                     ls.get("derivado_a_humano", False),
+                    ls.get("human_released", False),
                     json.dumps(ls.get("notas", [])),
                 ),
             )
@@ -1199,10 +1207,7 @@ def answer_with_rag(question: str, category: str = "salud", route: Optional[str]
         trimmed = re.sub(r"\n{3,}", "\n\n", trimmed)
         return (trimmed[:800] + ("…" if len(trimmed) > 800 else ""))
 
-    system = (
-        "Eres una agente de seguros en España. Responde con claridad y sin mencionar marcas. "
-        "No inventes coberturas ni precios. Si algo no está claro, dilo."
-    )
+    system = get_system_prompt(extra_context=build_playbook_prompt(category))
     user = (
         f"Pregunta del cliente: {question}\n\n"
         f"Contexto de póliza (extractos):\n{context}\n\n"
@@ -1825,8 +1830,50 @@ def _meta_send_wa(recipient_id: str, message: str) -> bool:
 
 
 def send_with_lag_sync(recipient_id: str, message: str) -> None:
-    time.sleep(random.uniform(LAG_MIN_S, LAG_MAX_S))
+    """Envía con retardo artificial usando distribución triangular (pico en 7s) y extra para mensajes largos."""
+    lag = random.triangular(LAG_MIN_S, LAG_MAX_S, 7.0)
+    if len(message) > 200:
+        lag += 2.0
+    time.sleep(lag)
     _meta_send_ig_dm(recipient_id, message)
+
+
+def _send_wa_with_lag(recipient_id: str, message: str) -> None:
+    """Envía WhatsApp con el mismo retardo artificial que send_with_lag_sync."""
+    lag = random.triangular(LAG_MIN_S, LAG_MAX_S, 7.0)
+    if len(message) > 200:
+        lag += 2.0
+    time.sleep(lag)
+    _meta_send_wa(recipient_id, message)
+
+
+def _bot_is_silenced(lead_id: str) -> bool:
+    """
+    Restriction 1: El bot NO debe responder si:
+    - derivado_a_humano = True
+    - human_released = False
+    - última actividad < 48h (sigue activo)
+    """
+    try:
+        ls = load_lead_state(lead_id)
+        if not ls.get("derivado_a_humano"):
+            return False
+        if ls.get("human_released"):
+            return False
+        ultimo = ls.get("ultimo_mensaje")
+        if not ultimo:
+            return False
+        now = datetime.now()
+        if hasattr(ultimo, 'tzinfo') and ultimo.tzinfo:
+            now = datetime.now(tz=ultimo.tzinfo)
+        horas = (now - ultimo).total_seconds() / 3600
+        if horas >= 48:
+            return False  # Inactividad > 48h → bot puede responder
+        return True
+    except Exception as e:
+        logger.error("BOT_IS_SILENCED_ERR lead=%s err=%s", lead_id, e)
+        return False
+
 
 def verify_meta_signature(raw_body: bytes, sig256: str, sig1: str) -> bool:
     if not META_APP_SECRET or META_SIGNATURE_MODE in ("", "dev"):
@@ -1879,6 +1926,11 @@ def send_followup_if_needed(lead_id: str) -> bool:
     try:
         ls = load_lead_state(lead_id)
         state = load_state(lead_id)
+        
+        # Restriction 1: No enviar follow-up si el bot está silenciado
+        if _bot_is_silenced(lead_id):
+            logger.info("FOLLOWUP_SKIP_SILENCED lead=%s", lead_id)
+            return False
         
         if flow_is_complete(state.get("slots", {})):
             return False
@@ -2145,6 +2197,11 @@ def process_message(lead_id: str, text: str, sender_id: str, source: str = "ig")
         logger.info("RATE_LIMITED sender=%s", sender_id[:10])
         return "Dame un momento que leo todo lo que me mandas 😊"
 
+    # Restriction 1: No responder si el bot está silenciado (derivado a humano sin release)
+    if _bot_is_silenced(lead_id):
+        logger.info("BOT_SILENCED lead=%s msg=%r", lead_id, text[:60])
+        return "Gracias por tu mensaje. Un agente humano se pondrá en contacto contigo pronto 😊"
+
     state = load_state(lead_id)
     if not state["ig_user_id"] and sender_id:
         state["ig_user_id"] = sender_id
@@ -2253,6 +2310,11 @@ def process_message(lead_id: str, text: str, sender_id: str, source: str = "ig")
         save_state(lead_id, state)
         return reply
 
+    # Calcular variables necesarias antes de los bloques que las usan
+    explicit_wa = is_explicit_wa_request(text)
+    purchase = is_purchase_intent(text)
+    nxt = next_required_slot(filled_slots) or next_any_slot(filled_slots)
+
     # HANDLE "completed" re-entry
     if state.get("step") == "completed":
         if explicit_wa or purchase:
@@ -2289,9 +2351,6 @@ def process_message(lead_id: str, text: str, sender_id: str, source: str = "ig")
 
     # Detectar el producto actual para preguntas personalizadas
     current_product = filled_slots.get("product_interest")
-
-    explicit_wa = is_explicit_wa_request(text)
-    purchase = is_purchase_intent(text)
 
     # WhatsApp explícito
     if explicit_wa:
@@ -2831,6 +2890,18 @@ async def api_agent_respond(req: AgentRespondReq, background_tasks: BackgroundTa
     ensure_profile_row(lead_id)
     log_event(lead_id, channel, "in", text, intent="api_in")
 
+    # Restriction 1: No responder si el bot está silenciado
+    if _bot_is_silenced(lead_id):
+        logger.info("API_BOT_SILENCED lead=%s msg=%r", lead_id, text[:60])
+        return AgentRespondResp(
+            ok=True,
+            lead_id=lead_id,
+            reply_text="Gracias por tu mensaje. Un agente humano se pondrá en contacto contigo pronto 😊",
+            intent="bot_silenced",
+            needs_handoff=True,
+            sent_via_meta=False,
+        )
+
     try:
         agent_reply = process_message(lead_id, text, sender_id=sender_id, source=source)
     except Exception as e:
@@ -2912,6 +2983,12 @@ async def meta_webhook_receive(request: FastAPIRequest, background_tasks: Backgr
     messages = _extract_messages(payload)
     for sender_id, text in messages:
         lead_id = lead_id_from_ig_user(sender_id)
+
+        # Restriction 1: No responder si el bot está silenciado
+        if _bot_is_silenced(lead_id):
+            logger.info("META_BOT_SILENCED lead=%s msg=%r", lead_id, text[:60])
+            continue
+
         cached = _dedup_get(lead_id, text)
         if cached:
             if not _meta_sender_is_blocked(sender_id):
@@ -2999,16 +3076,22 @@ async def wa_webhook_receive(request: FastAPIRequest, background_tasks: Backgrou
     messages = _extract_wa_messages(payload)
     for sender_id, text, contact_name in messages:
         lead_id = lead_id_from_ig_user(sender_id)
+
+        # Restriction 1: No responder si el bot está silenciado
+        if _bot_is_silenced(lead_id):
+            logger.info("WA_BOT_SILENCED lead=%s msg=%r", lead_id, text[:60])
+            continue
+
         cached = _dedup_get(lead_id, text)
         if cached:
             if not _meta_sender_is_blocked(sender_id):
-                background_tasks.add_task(_meta_send_wa, sender_id, cached)
+                background_tasks.add_task(_send_wa_with_lag, sender_id, cached)
             continue
 
         reply = handle_incoming(sender_id, text)
         _dedup_set(lead_id, text, reply)
         if not _meta_sender_is_blocked(sender_id):
-            background_tasks.add_task(_meta_send_wa, sender_id, reply)
+            background_tasks.add_task(_send_wa_with_lag, sender_id, reply)
 
     return {"ok": True, "processed": len(messages)}
 
@@ -3023,6 +3106,26 @@ def lead_state_get(lead_id: str):
         ls = load_lead_state(lead_id)
         return {"ok": True, "lead_id": lead_id, "lead_state": ls}
     except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/lead/{lead_id}/release-bot")
+def lead_release_bot(lead_id: str):
+    """
+    Libera al bot para que pueda responder de nuevo a un lead que había sido
+    derivado a humano. Establece human_released = True.
+    """
+    try:
+        ls = load_lead_state(lead_id)
+        if not ls.get("derivado_a_humano"):
+            return {"ok": False, "error": "El lead no está derivado a humano"}
+        ls["human_released"] = True
+        ls["notas"].append(f"Bot liberado manualmente para responder")
+        save_lead_state(lead_id, ls)
+        logger.info("BOT_RELEASED lead=%s", lead_id)
+        return {"ok": True, "lead_id": lead_id, "human_released": True}
+    except Exception as e:
+        logger.error("BOT_RELEASE_ERR lead=%s err=%s", lead_id, e)
         return {"ok": False, "error": str(e)}
 
 
