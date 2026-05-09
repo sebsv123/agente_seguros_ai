@@ -94,7 +94,63 @@ except Exception:
     _OpenAIClient = None  # type: ignore
     _HAS_OPENAI = False
 
-app = FastAPI(title="Agente Rosa — Seguros IG→WhatsApp")
+from contextlib import asynccontextmanager
+
+def wait_for_db(max_retries: int = 10, delay_s: float = 3.0) -> bool:
+    """
+    Espera a que la DB esté disponible antes de hacer bootstrap.
+    Reintenta max_retries veces con delay_s segundos entre intentos.
+    """
+    for attempt in range(1, max_retries + 1):
+        try:
+            with db_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+            logger.info("DB lista (intento %d/%d)", attempt, max_retries)
+            return True
+        except Exception as e:
+            logger.warning(
+                "DB no disponible (intento %d/%d): %s — reintentando en %.0fs",
+                attempt, max_retries, e, delay_s
+            )
+            time.sleep(delay_s)
+    logger.error("DB no disponible tras %d intentos — abortando bootstrap", max_retries)
+    return False
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # ── STARTUP ──────────────────────────────
+    logger.info("STARTUP esperando DB...")
+    if wait_for_db(max_retries=10, delay_s=3.0):
+        try:
+            bootstrap_schema()
+            logger.info("STARTUP bootstrap OK")
+        except Exception as e:
+            logger.error("STARTUP bootstrap FAILED: %s", e)
+    else:
+        logger.error("STARTUP sin DB — el agente arranca SIN schema")
+
+    if embedder is not None:
+        logger.info("STARTUP embedder OK")
+    else:
+        logger.warning("STARTUP embedder NO disponible")
+
+    if _ai_client is not None:
+        logger.info("STARTUP AI client OK")
+    else:
+        logger.warning("STARTUP AI client NO disponible")
+
+    logger.info("STARTUP agente Rosa listo ✓")
+    yield
+    logger.info("SHUTDOWN agente Rosa detenido")
+
+
+app = FastAPI(
+    title="Agente Rosa — Seguros IG→WhatsApp",
+    version="2.0.0",
+    lifespan=lifespan,
+)
 
 # ══════════════════════════════════════════════════════
 # CONFIG
@@ -2772,39 +2828,6 @@ def build_playbook_prompt(producto: str) -> str:
     lines.append("=== FIN INSTRUCCIONES ===")
     return "\n".join(lines)
 
-
-# ══════════════════════════════════════════════════════
-# Startup
-# ══════════════════════════════════════════════════════
-
-@app.on_event("startup")
-async def on_startup():
-    try:
-        bootstrap_schema()
-    except Exception as e:
-        logger.error("BOOTSTRAP_ERROR %s", e)
-    # Cargar playbooks al iniciar (no bloquea si falla)
-    _load_playbooks()
-    
-    # Iniciar APScheduler para resumen semanal (lunes 9:00)
-    try:
-        from apscheduler.schedulers.background import BackgroundScheduler
-        from backend.agent_evaluator import generate_weekly_summary
-        
-        _scheduler = BackgroundScheduler()
-        _scheduler.add_job(
-            generate_weekly_summary,
-            trigger='cron',
-            day_of_week='mon',
-            hour=9,
-            minute=0,
-            id='weekly_summary',
-            replace_existing=True,
-        )
-        _scheduler.start()
-        logger.info("SCHEDULER_STARTED weekly_summary: lunes 9:00")
-    except Exception as e:
-        logger.warning("SCHEDULER_NOT_STARTED %s", e)
 
 # ══════════════════════════════════════════════════════
 # ENDPOINTS
