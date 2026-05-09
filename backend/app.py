@@ -57,11 +57,26 @@ from pydantic import BaseModel
 
 load_dotenv()
 
+import json as _json_mod
+
+class _JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        log_obj = {
+            "time":    self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+            "level":   record.levelname,
+            "logger":  record.name,
+            "msg":     record.getMessage(),
+            "file":    f"{record.filename}:{record.lineno}",
+        }
+        if record.exc_info:
+            log_obj["exc"] = self.formatException(record.exc_info)
+        return _json_mod.dumps(log_obj, ensure_ascii=False)
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(_JsonFormatter())
+logging.basicConfig(level=logging.INFO, handlers=[_handler])
+
 logger = logging.getLogger("rosa")
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [rosa] %(message)s",
-)
 
 try:
     import numpy as np
@@ -2796,17 +2811,64 @@ async def on_startup():
 # ══════════════════════════════════════════════════════
 
 @app.get("/health")
-def health():
+async def health_check():
+    """
+    Healthcheck para Oracle Load Balancer y Docker.
+    Verifica: servidor activo + conexión DB + embedder listo.
+    Responde siempre en < 2 segundos.
+    """
+    checks = {}
+    overall = "ok"
+
+    # 1. DB check
+    try:
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+        checks["db"] = "ok"
+    except Exception as e:
+        checks["db"] = f"error: {str(e)[:60]}"
+        overall = "degraded"
+
+    # 2. Embedder check
+    checks["embedder"] = "ok" if embedder is not None else "unavailable"
+
+    # 3. AI client check
+    checks["ai_client"] = "ok" if _ai_client is not None else "unavailable"
+
+    # 4. KB check (contar chunks)
+    try:
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM kb_documents")
+                kb_count = cur.fetchone()[0]
+        checks["kb_chunks"] = kb_count
+    except Exception:
+        checks["kb_chunks"] = 0
+
+    status_code = 200 if overall == "ok" else 206
+
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": overall,
+            "agent": AGENT_NAME,
+            "version": "2.0.0",
+            "checks": checks,
+            "timestamp": datetime.now().isoformat(),
+        }
+    )
+
+
+@app.get("/")
+async def root():
+    """Endpoint raíz — confirma que el agente está online."""
     return {
-        "ok": True,
         "agent": AGENT_NAME,
-        "llm_available": _ai_client is not None,
-        "embedder_available": embedder is not None,
-        "kb_data_dir": KB_DATA_DIR,
-        "auto_wa_enabled": AUTO_WA_ENABLED,
-        "auto_wa_threshold": AUTO_WA_SCORE_THRESHOLD,
-        "playbooks_loaded": _PLAYBOOKS_LOADED,
-        "playbooks_count": len(_PLAYBOOKS),
+        "status": "online",
+        "docs": "/docs",
+        "health": "/health"
     }
 
 # -------- Playbooks debug endpoint --------

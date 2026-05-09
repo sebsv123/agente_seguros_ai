@@ -8,7 +8,11 @@ ENV PYTHONUNBUFFERED=1
 
 # Instalar dependencias del sistema mínimas
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
     libpq-dev \
+    tesseract-ocr \
+    tesseract-ocr-spa \
+    tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 # Copiar solo requirements primero (caché de Docker)
