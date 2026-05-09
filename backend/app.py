@@ -47,7 +47,7 @@ from urllib.parse import quote
 from urllib.error import HTTPError
 from urllib.request import Request as URequest, urlopen
 
-from system_prompt import get_system_prompt
+from system_prompt import get_system_prompt, get_system_prompt_en
 
 import psycopg
 from dotenv import load_dotenv
@@ -159,16 +159,25 @@ if _HAS_ST:
         logger.warning("Embedder init failed: %s", e)
         embedder = None
 
-# AI client (OpenAI or Groq)
+# AI client (DeepSeek → Groq → OpenAI)
 _ai_client = None
-if GROQ_API_KEY:
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+if DEEPSEEK_API_KEY:
+    try:
+        from openai import OpenAI as _OpenAIWrapper
+        _ai_client = _OpenAIWrapper(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com/v1")
+        logger.info("DeepSeek client listo (model=%s)", DEEPSEEK_MODEL)
+    except Exception as e:
+        logger.warning("DeepSeek init failed: %s", e)
+if _ai_client is None and GROQ_API_KEY:
     try:
         from openai import OpenAI as _OpenAIWrapper
         _ai_client = _OpenAIWrapper(api_key=GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
         logger.info("Groq client listo (model=%s)", GROQ_MODEL)
     except Exception as e:
         logger.warning("Groq init failed: %s", e)
-elif _HAS_OPENAI and OPENAI_API_KEY:
+if _ai_client is None and _HAS_OPENAI and OPENAI_API_KEY:
     try:
         _ai_client = _OpenAIClient(api_key=OPENAI_API_KEY)
         logger.info("OpenAI client listo (model=%s)", OPENAI_MODEL)
@@ -1207,12 +1216,22 @@ def answer_with_rag(question: str, category: str = "salud", route: Optional[str]
         trimmed = re.sub(r"\n{3,}", "\n\n", trimmed)
         return (trimmed[:800] + ("…" if len(trimmed) > 800 else ""))
 
-    system = get_system_prompt(extra_context=build_playbook_prompt(category))
-    user = (
-        f"Pregunta del cliente: {question}\n\n"
-        f"Contexto de póliza (extractos):\n{context}\n\n"
-        "Responde en español, máximo 6-8 líneas. Si procede, usa 3-4 bullets."
-    )
+    # Detectar idioma de la pregunta
+    lang = detect_language(question)
+    if lang == "en":
+        system = get_system_prompt_en(extra_context=build_playbook_prompt(category))
+        user = (
+            f"Client question: {question}\n\n"
+            f"Policy context (extracts):\n{context}\n\n"
+            "Answer in English, max 6-8 lines. Use 3-4 bullets if appropriate."
+        )
+    else:
+        system = get_system_prompt(extra_context=build_playbook_prompt(category))
+        user = (
+            f"Pregunta del cliente: {question}\n\n"
+            f"Contexto de póliza (extractos):\n{context}\n\n"
+            "Responde en español, máximo 6-8 líneas. Si procede, usa 3-4 bullets."
+        )
     try:
         resp = _ai_client.chat.completions.create(
             model=OPENAI_MODEL,
@@ -2468,6 +2487,21 @@ def process_message(lead_id: str, text: str, sender_id: str, source: str = "ig")
     score, tag, prob = calculate_lead_score(lead_id, text, state)
     update_lead_scoring(lead_id, score, tag, prob)
     
+    # 🔥 Alerta al equipo si score >= umbral
+    try:
+        from backend.notifier import send_whatsapp_alert
+        slots = state.get("slots", {})
+        send_whatsapp_alert({
+            "lead_id": lead_id,
+            "score": score,
+            "name": slots.get("name", ""),
+            "product_interest": slots.get("product_interest", ""),
+            "last_text": text,
+            "sender_id": sender_id,
+        })
+    except Exception as e:
+        logger.warning("ALERT_ERROR lead=%s err=%s", lead_id, e)
+    
     # 🚨 Lógica de Citas (Appointment Setter)
     # Si es Gold Opportunity y aún no hemos preguntado por la cita
     if score >= 8 and not filled_slots.get("appointment_requested"):
@@ -2488,6 +2522,83 @@ def process_message(lead_id: str, text: str, sender_id: str, source: str = "ig")
             )
             msg = f"{msg}\n\n{appointment_q}"
             state["step"] = "appointment_requested"
+    
+    # 🗓️ Google Calendar: si el cliente aceptó la llamada, proponer slots
+    if state.get("step") == "appointment_requested" and filled_slots.get("appointment_requested") is True:
+        # Si ya propusimos slots y el cliente eligió uno
+        if state.get("calendar_slots_proposed"):
+            choice = text.strip()
+            slots_proposed = state.get("calendar_slots_proposed", [])
+            slot_idx = None
+            if choice in ["1", "2", "3"]:
+                slot_idx = int(choice) - 1
+            else:
+                # Intentar matchear por texto
+                for i, s in enumerate(slots_proposed):
+                    if s.lower() in choice.lower() or choice.lower() in s.lower():
+                        slot_idx = i
+                        break
+            
+            if slot_idx is not None and 0 <= slot_idx < len(slots_proposed):
+                # Parsear el slot elegido
+                slot_text = slots_proposed[slot_idx]
+                logger.info("CALENDAR_SLOT_CHOSEN lead=%s slot=%s", lead_id[:12], slot_text)
+                
+                # Convertir texto a datetime
+                now = datetime.now()
+                dia = now.date()
+                if "Mañana" in slot_text:
+                    dia = now.date() + timedelta(days=1)
+                hora_match = re.search(r"(\d{1,2}):(\d{2})", slot_text)
+                if hora_match:
+                    hora = int(hora_match.group(1))
+                    minuto = int(hora_match.group(2))
+                    slot_dt = datetime(dia.year, dia.month, dia.day, hora, minuto)
+                    
+                    nombre = filled_slots.get("name", "")
+                    producto = current_product or "seguro"
+                    
+                    # Crear evento en Google Calendar
+                    created = create_calendar_event(slot_dt, nombre, sender_id)
+                    
+                    if created:
+                        confirm_msg = f"Perfecto, Rosa te llama el {slot_text}. ¡Hasta entonces! 🙏"
+                        logger.info("CALENDAR_EVENT_CREATED lead=%s slot=%s", lead_id[:12], slot_text)
+                    else:
+                        confirm_msg = "Te apunto para llamarte. Rosa se pone en contacto contigo pronto. 603 44 87 65 🙏"
+                    
+                    # Notificar al equipo
+                    try:
+                        from backend.notifier import send_whatsapp_alert
+                        send_whatsapp_alert({
+                            "lead_id": lead_id,
+                            "score": score,
+                            "name": nombre,
+                            "product_interest": producto,
+                            "last_text": f"Llamada agendada: {slot_text}",
+                            "sender_id": sender_id,
+                        })
+                    except Exception:
+                        pass
+                    
+                    msg = f"{msg}\n\n{confirm_msg}"
+                    state["step"] = "call_scheduled"
+            else:
+                # No entendió la elección, repetir opciones
+                slots_list = "\n".join(f"{i+1}) {s}" for i, s in enumerate(slots_proposed))
+                msg = f"{msg}\n\nNo entendí bien. Estas son las opciones:\n{slots_list}\n\n¿Cuál te viene mejor? (responde 1, 2 o 3)"
+        else:
+            # Proponer slots por primera vez
+            slots_proposed = propose_call_slots()
+            if slots_proposed:
+                state["calendar_slots_proposed"] = slots_proposed
+                slots_list = "\n".join(f"{i+1}) {s}" for i, s in enumerate(slots_proposed))
+                msg = f"{msg}\n\nPerfecto. Te propongo estas opciones:\n{slots_list}\n\n¿Cuál te viene mejor?"
+                logger.info("CALENDAR_SLOTS_PROPOSED lead=%s slots=%s", lead_id[:12], slots_proposed)
+            else:
+                # Calendar no disponible, fallback
+                msg = f"{msg}\n\nTe apunto para llamarte. Rosa se pone en contacto contigo pronto. 603 44 87 65 🙏"
+                state["step"] = "call_scheduled"
 
     # Alerta "Oportunidad de Oro" (n8n notification)
     if score >= AUTO_WA_SCORE_THRESHOLD and mode == "insurance":
@@ -2925,6 +3036,115 @@ async def api_agent_respond(req: AgentRespondReq, background_tasks: BackgroundTa
         needs_handoff=needs_handoff,
         sent_via_meta=sent_via_meta,
     )
+
+@app.post("/api/agent/voice")
+async def api_agent_voice(
+    request: FastAPIRequest,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Recibe un audio de WhatsApp, lo transcribe con Whisper (OpenAI-compatible)
+    y procesa el texto transcrito como un mensaje normal.
+    """
+    import tempfile
+
+    WHISPER_MODEL = os.getenv("WHISPER_MODEL", "whisper-1")
+
+    try:
+        form = await request.form()
+        audio_file = form.get("audio")
+        lead_id_raw = form.get("lead_id", "")
+        sender_id = form.get("sender_id", "")
+        source = form.get("source", "whatsapp")
+
+        if not audio_file:
+            return {"ok": False, "error": "No se recibió archivo de audio"}
+
+        logger.info("AUDIO_RECIBIDO lead=%s sender=%s size=%s", lead_id_raw[:12], sender_id[:10], getattr(audio_file, "size", 0))
+
+        # Guardar temporalmente el audio
+        content = await audio_file.read()
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+
+        # Transcribir con Whisper (OpenAI-compatible)
+        transcribed = None
+        if _ai_client is not None:
+            try:
+                with open(tmp_path, "rb") as f:
+                    transcript = _ai_client.audio.transcriptions.create(
+                        model=WHISPER_MODEL,
+                        file=f,
+                        language="es",
+                    )
+                transcribed = transcript.text.strip()
+                logger.info("TRANSCRIPCION lead=%s texto=%r", lead_id_raw[:12], transcribed[:100])
+            except Exception as e:
+                logger.error("WHISPER_ERROR lead=%s err=%s", lead_id_raw[:12], e)
+        else:
+            logger.warning("WHISPER_NO_CLIENT lead=%s (no hay _ai_client)", lead_id_raw[:12])
+
+        # Limpiar archivo temporal
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+        if not transcribed:
+            return {
+                "ok": True,
+                "lead_id": lead_id_raw,
+                "reply_text": "No he podido escuchar bien el audio. ¿Puedes escribirme lo que necesitas? 🙏",
+                "transcribed": None,
+            }
+
+        # Procesar como mensaje de texto normal
+        source_norm = normalize_source_channel(source)
+        lead_id = normalize_lead_id(lead_id_raw.strip(), sender_id)
+        channel = channel_from_source(source_norm)
+
+        ensure_lead_row(lead_id, source_channel=source_norm, category="salud")
+        ensure_profile_row(lead_id)
+        log_event(lead_id, channel, "in", transcribed, intent="voice_in")
+
+        if _bot_is_silenced(lead_id):
+            return {
+                "ok": True,
+                "lead_id": lead_id,
+                "reply_text": "Gracias por tu mensaje. Un agente humano se pondrá en contacto contigo pronto 😊",
+                "transcribed": transcribed,
+            }
+
+        try:
+            agent_reply = process_message(lead_id, transcribed, sender_id=sender_id, source=source_norm)
+        except Exception as e:
+            logger.error("VOICE_PROCESS_ERROR lead=%s err=%s", lead_id, e, exc_info=True)
+            agent_reply = "Disculpa, ha habido un problema técnico 😊 ¿Me lo puedes repetir?"
+
+        _dedup_set(lead_id, transcribed, agent_reply)
+
+        if META_ACCESS_TOKEN and sender_id and not _meta_sender_is_blocked(sender_id):
+            background_tasks.add_task(send_with_lag_sync, sender_id, agent_reply)
+
+        logger.info("VOICE_RESPONSE lead=%s reply=%r", lead_id, agent_reply[:80])
+
+        return {
+            "ok": True,
+            "lead_id": lead_id,
+            "reply_text": agent_reply,
+            "transcribed": transcribed,
+        }
+
+    except Exception as e:
+        logger.error("VOICE_ENDPOINT_ERROR err=%s", e, exc_info=True)
+        return {
+            "ok": True,
+            "lead_id": lead_id_raw if 'lead_id_raw' in dir() else "",
+            "reply_text": "No he podido escuchar bien el audio. ¿Puedes escribirme lo que necesitas? 🙏",
+            "transcribed": None,
+        }
+
 
 @app.get("/meta/webhook")
 async def meta_webhook_verify(request: FastAPIRequest):
