@@ -35,6 +35,30 @@ from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 
+# ── Optional dependencies with guards ──────────────────
+try:
+    import fitz  # PyMuPDF
+    _HAS_FITZ = True
+except Exception:
+    fitz = None  # type: ignore
+    _HAS_FITZ = False
+
+try:
+    import pytesseract
+    _HAS_TESSERACT = True
+except Exception:
+    pytesseract = None  # type: ignore
+    _HAS_TESSERACT = False
+
+try:
+    from PIL import Image
+    from io import BytesIO
+    _HAS_PIL = True
+except Exception:
+    Image = None  # type: ignore
+    BytesIO = None  # type: ignore
+    _HAS_PIL = False
+
 load_dotenv()
 
 logging.basicConfig(
@@ -251,19 +275,192 @@ def extract_text_pdfplumber(filepath: Path) -> Optional[str]:
         return None
 
 
-def extract_text(filepath: Path) -> Optional[str]:
-    """Extrae texto de un PDF, probando múltiples extractores."""
-    text = extract_text_pypdf(filepath)
-    if not text:
-        text = extract_text_pdfplumber(filepath)
-    if not text:
-        logger.error("No se pudo extraer texto de %s", filepath.name)
+def extract_text_pymupdf_ocr(filepath: Path) -> Optional[str]:
+    try:
+        import fitz
+        try:
+            from PIL import Image
+            from io import BytesIO
+            import pytesseract
+        except ImportError:
+            return None
+        doc = fitz.open(str(filepath))
+        pages = []
+        for page in doc:
+            t = page.get_text()
+            if t and len(t.strip()) > 50:
+                pages.append(t)
+            else:
+                pix = page.get_pixmap(dpi=200)
+                img_bytes = pix.tobytes("png")
+                img = Image.open(BytesIO(img_bytes))
+                t = pytesseract.image_to_string(img, lang="spa+eng")
+                if t.strip():
+                    pages.append(t)
+        doc.close()
+        return "\n".join(pages) if pages else None
+    except Exception as e:
+        logger.warning("pymupdf_ocr error on %s: %s", filepath.name, e)
         return None
-    # Aplicar sanitización completa ANTES de generar cualquier playbook
-    return sanitize_text(text)
+
+
+def extract_text(filepath: Path) -> Optional[str]:
+    """Extrae texto de un PDF, probando múltiples extractores en orden."""
+    text = extract_text_pypdf(filepath)
+    if text and len(text.strip()) > 50:
+        return sanitize_text(text)
+    
+    text = extract_text_pdfplumber(filepath)
+    if text and len(text.strip()) > 50:
+        return sanitize_text(text)
+    
+    text = extract_text_pymupdf_ocr(filepath)
+    if text and len(text.strip()) > 50:
+        return sanitize_text(text)
+    
+    logger.error("No se pudo extraer texto de %s (probados: pypdf, pdfplumber, pymupdf_ocr)", filepath.name)
+    return None
 
 
 # ── Generación de playbook ────────────────────────────
+def _generar_argumentos(producto: str) -> List[str]:
+    """Devuelve argumentos comerciales hardcoded por producto."""
+    args = {
+        "salud": [
+            "+10 años en Madrid Oeste",
+            "Desde 22,50€/mes",
+            "Sin copagos disponible",
+            "Sin carencias en urgencias",
+            "Asesoría personal incluida",
+        ],
+        "extranjeria": [
+            "+100 NIE/TIE aprobados",
+            "Sin copagos desde el día 1",
+            "Certificado en 24h",
+            "Válido para visado y residencia",
+            "Te atendemos en tu idioma",
+        ],
+        "extranjeros": [
+            "+100 NIE/TIE aprobados",
+            "Sin copagos desde el día 1",
+            "Certificado en 24h",
+            "Válido para visado y residencia",
+            "Te atendemos en tu idioma",
+        ],
+        "vida": [
+            "Cobertura desde el primer día",
+            "Capital desde 50.000€",
+            "Protege tu hipoteca y familia",
+            "Sin médico en muchos casos",
+        ],
+        "dental": [
+            "Revisiones ilimitadas",
+            "Sin esperas para limpieza",
+            "Precios muy competitivos",
+            "Red amplia de clínicas en Madrid",
+        ],
+        "mascotas": [
+            "Cubre enfermedades y accidentes",
+            "Red veterinaria en Madrid",
+            "Sin franquicia en urgencias",
+        ],
+        "autonomos": [
+            "Baja desde el día 1 en algunos planes",
+            "Responsabilidad civil incluida",
+            "Adaptado a tu actividad",
+        ],
+        "accidentes": [
+            "Cobertura 24h en todo el mundo",
+            "Indemnización desde el primer accidente",
+            "Sin periodos de espera",
+        ],
+        "decesos": [
+            "Gestión completa del sepelio",
+            "Sin límite de edad en muchos planes",
+            "Tranquilidad para toda la familia",
+        ],
+    }
+    result = args.get(producto, [
+        "Asesoría personalizada",
+        "Precios competitivos",
+        "Más de 10 años de experiencia",
+        "+1.200 familias protegidas",
+    ])
+    return [sanitize_brands(a) for a in result]
+
+
+def _generar_respuestas_objeciones(producto: str) -> List[Dict[str, str]]:
+    """Devuelve objeciones con respuestas comerciales estilo WhatsApp."""
+    base = {
+        "salud": [
+            {"objecion": "Ya tengo la seguridad social", "respuesta": "La pública es un derecho, claro. Pero tener médico sin listas de espera que te ve hoy o mañana cambia la vida — muchos clientes lo tienen complementario."},
+            {"objecion": "Es muy caro", "respuesta": "Desde 22,50€/mes. Para muchas familias es menos que una cena, y cuando lo necesitas no tiene precio."},
+            {"objecion": "Tengo preexistencias", "respuesta": "Muchas preexistencias sí tienen cobertura. Cuéntame cuál es y lo miramos juntos sin compromiso."},
+            {"objecion": "Ya tengo seguro con mi banco", "respuesta": "Los seguros de banco suelen tener coberturas más limitadas y son más caros. Podemos comparar sin que tengas que cambiar nada todavía."},
+        ],
+        "extranjeria": [
+            {"objecion": "No sé si vale para mi visado", "respuesta": "Llevamos más de 100 tramitaciones aprobadas. Dime qué tipo de visado es y te confirmo en minutos si cubre."},
+            {"objecion": "Es complicado el proceso", "respuesta": "Nosotros lo gestionamos todo. Solo necesitas contratarlo, el certificado te llega en 24h."},
+            {"objecion": "Voy a volver a mi país en unos meses", "respuesta": "Puedes contratar por meses, sin permanencia. Mientras estés aquí, estás cubierto."},
+        ],
+        "extranjeros": [
+            {"objecion": "No sé si vale para mi visado", "respuesta": "Llevamos más de 100 tramitaciones aprobadas. Dime qué tipo de visado es y te confirmo en minutos si cubre."},
+            {"objecion": "Es complicado el proceso", "respuesta": "Nosotros lo gestionamos todo. Solo necesitas contratarlo, el certificado te llega en 24h."},
+            {"objecion": "Voy a volver a mi país en unos meses", "respuesta": "Puedes contratar por meses, sin permanencia. Mientras estés aquí, estás cubierto."},
+        ],
+        "vida": [
+            {"objecion": "Soy joven y no lo necesito", "respuesta": "Cuanto más joven, más barato. Y si mañana pasa algo, tus seres queridos te lo agradecerán."},
+            {"objecion": "Ya tengo uno con la hipoteca", "respuesta": "El del banco solo cubre la deuda pendiente. Con un seguro aparte, además proteges a tu familia."},
+            {"objecion": "Es caro para lo que cubre", "respuesta": "Desde 50.000€ de capital por menos de 1€ al día. Cuando piensas en quienes dependen de ti, no tiene precio."},
+        ],
+        "dental": [
+            {"objecion": "Me sale más barato pagar por separado", "respuesta": "Una limpieza cuesta unos 50€. Con el seguro pagas menos de 15€ al mes y tienes revisiones ilimitadas."},
+            {"objecion": "Solo voy una vez al año", "respuesta": "Justo por eso merece la pena: por el precio de una visita al año, tienes revisiones ilimitadas y descuentos en todo."},
+            {"objecion": "Mi médico ya cubre dental básico", "respuesta": "El dental de los seguros médicos suele ser muy básico. Con un plan específico tienes ortodoncia, implantes y mucho más."},
+        ],
+        "mascotas": [
+            {"objecion": "Mi mascota está sana", "respuesta": "Eso es lo mejor. Justo ahora es el mejor momento para contratar, antes de que tenga cualquier problema."},
+            {"objecion": "Es caro para un animal", "respuesta": "Una urgencia veterinaria puede costar 300€ o más. Por menos de 1€ al día, duermes tranquilo."},
+        ],
+        "autonomos": [
+            {"objecion": "Ya cotizo bastante", "respuesta": "La mutua cubre lo básico. Con un seguro privado tienes especialistas sin esperas y baja desde el día 1 en algunos planes."},
+            {"objecion": "Es un gasto más", "respuesta": "Piénsalo como proteger tu herramienta de trabajo: tú. Si no estás al 100%, tu negocio lo nota."},
+        ],
+        "accidentes": [
+            {"objecion": "A mí no me va a pasar nada", "respuesta": "Ojalá tengas razón. Pero los accidentes pasan sin avisar, y una cobertura de 24h en todo el mundo es muy barata comparada con lo que cuesta no tenerla."},
+            {"objecion": "Mi trabajo no es de riesgo", "respuesta": "No hace falta. Un accidente de coche, una caída de fin de semana... esto cubre tu tiempo libre también."},
+        ],
+        "decesos": [
+            {"objecion": "No quiero pensar en eso", "respuesta": "Lo entiendo. Pero tenerlo organizado es un regalo para tu familia. Ellos no tendrán que preocuparse de nada."},
+            {"objecion": "Mis hijos se harán cargo", "respuesta": "Claro, pero un sepelio cuesta entre 3.000 y 6.000€. Con el seguro, ellos solo tienen que despedirse."},
+        ],
+        "juridica": [
+            {"objecion": "Nunca he tenido problemas legales", "respuesta": "Ojalá siga siendo así. Pero si llega el día, tener un abogado disponible 24h marca la diferencia."},
+            {"objecion": "Es caro para lo que ofrece", "respuesta": "Una consulta con abogado cuesta 100€ fácil. Por menos de 30€ al mes tienes defensa completa."},
+        ],
+        "hogar": [
+            {"objecion": "Mi casa es nueva y está bien", "respuesta": "Justo por eso: una avería eléctrica o una fuga de agua puede costarte miles de euros. Mejor prevenir."},
+            {"objecion": "Ya tengo seguro de hogar", "respuesta": "Podemos revisar tu póliza actual y ver si estás pagando de más por coberturas que no necesitas."},
+        ],
+        "viaje": [
+            {"objecion": "Viajo poco", "respuesta": "Con un viaje al año ya compensa. Una repatriación cuesta miles de euros y con el seguro la tienes cubierta."},
+            {"objecion": "Mi tarjeta del banco ya me cubre", "respuesta": "Las tarjetas suelen tener coberturas muy limitadas. Comparamos tu cobertura actual con la nuestra sin compromiso."},
+        ],
+        "negocios": [
+            {"objecion": "Mi negocio es pequeño", "respuesta": "Los pequeños son los que más lo notan. Una reclamación de un cliente puede hundir un negocio pequeño."},
+            {"objecion": "Ya tengo seguro", "respuesta": "Podemos revisar tu póliza actual y ver si se ajusta a tu actividad real. Muchas veces se paga de más."},
+        ],
+    }
+    result = base.get(producto, [
+        {"objecion": "No lo necesito", "respuesta": "Ojalá tengas razón. Pero por lo que cuesta, merece la pena estar tranquilo."},
+        {"objecion": "Es demasiado caro", "respuesta": "Hay opciones para todos los presupuestos. Cuéntame qué buscas y te ajustamos algo."},
+    ])
+    # Sanitizar marcas en todas las respuestas
+    for item in result:
+        item["respuesta"] = sanitize_brands(item["respuesta"])
+    return result
+
+
 def generar_playbook(producto: str, texto: str, source_file: str) -> Dict[str, Any]:
     """
     Genera un playbook estructurado a partir del texto extraído del PDF.
@@ -275,7 +472,6 @@ def generar_playbook(producto: str, texto: str, source_file: str) -> Dict[str, A
     texto_lower = texto.lower()
     
     # --- resumen_comercial ---
-    # Intentar extraer las primeras líneas con pinta de resumen/descripción
     resumen = _extraer_resumen(texto, producto)
     
     # --- perfil_objetivo ---
@@ -296,6 +492,12 @@ def generar_playbook(producto: str, texto: str, source_file: str) -> Dict[str, A
     # --- cuando_derivar_humano ---
     derivar = _generar_derivacion(producto)
     
+    # --- argumentos_clave ---
+    argumentos = _generar_argumentos(producto)
+    
+    # --- respuestas_objeciones ---
+    respuestas_obj = _generar_respuestas_objeciones(producto)
+    
     return {
         "producto": producto,
         "source_file": source_file,
@@ -306,46 +508,89 @@ def generar_playbook(producto: str, texto: str, source_file: str) -> Dict[str, A
         "objeciones_frecuentes": objeciones,
         "limites": limites,
         "cuando_derivar_humano": derivar,
+        "argumentos_clave": argumentos,
+        "respuestas_objeciones": respuestas_obj,
     }
 
 
-def _extraer_resumen(texto: str, producto: str) -> str:
-    """Extrae un resumen comercial de 1-3 frases."""
+def _extraer_resumen(texto: str, producto: str) -> Optional[str]:
+    """
+    Extrae un resumen comercial del texto del PDF.
+    
+    Estrategia:
+    1. Buscar secciones con cabeceras conocidas (OBJETO DEL SEGURO, etc.)
+    2. Fallback: primeras líneas con sentido comercial
+    3. Si no se encuentra nada útil, devuelve None (se usará resumen hardcoded)
+    """
     lineas = [l.strip() for l in texto.split("\n") if l.strip()]
     
-    # Buscar líneas que parezcan un resumen/descripción del producto
-    keywords_resumen = [
-        "seguro", "cobertura", "protección", "plan", "póliza",
-        "incluye", "ofrece", "garantiza", "cubre"
+    # ── Estrategia 1: Buscar secciones por cabecera ──────────────────────
+    cabeceras = [
+        "OBJETO DEL SEGURO", "¿QUÉ CUBRE", "QUÉ ES", "DESCRIPCIÓN DEL PRODUCTO",
+        "DESCRIPCION DEL PRODUCTO", "RESUMEN", "MODALIDADES", "QUÉ INCLUYE",
+        "QUE INCLUYE", "CARACTERÍSTICAS", "CARACTERISTICAS", "COBERTURAS",
     ]
     
-    candidatas = []
     for i, linea in enumerate(lineas):
-        linea_lower = linea.lower()
-        # Saltar encabezados, pies de página, números de página
-        if len(linea_lower) < 20 or len(linea_lower) > 500:
+        linea_upper = linea.strip().upper()
+        # Comprobar si esta línea es una cabecera conocida
+        for cab in cabeceras:
+            if linea_upper.startswith(cab) or linea_upper == cab:
+                # Recoger texto desde la siguiente línea hasta el siguiente encabezado
+                partes = []
+                for j in range(i + 1, min(i + 30, len(lineas))):
+                    sig_linea = lineas[j]
+                    # Detener si encontramos otro posible encabezado
+                    if (sig_linea.isupper() and len(sig_linea) > 3 and len(sig_linea) < 80):
+                        break
+                    if sig_linea and len(sig_linea) > 10:
+                        partes.append(sig_linea)
+                    if len(" ".join(partes)) > 500:
+                        break
+                
+                if partes:
+                    resumen = " ".join(partes)
+                    # Limpiar
+                    resumen = re.sub(r"\n{2,}", "\n", resumen)
+                    resumen = resumen.strip()
+                    # Acortar a máximo 300 caracteres
+                    if len(resumen) > 300:
+                        resumen = resumen[:300].rsplit(" ", 1)[0] + "."
+                    if len(resumen) >= 30:
+                        return sanitize_brands(resumen)
+    
+    # ── Estrategia 2 (fallback): primeras líneas con sentido ─────────────
+    _REJECT_PATTERNS = re.compile(
+        r"(página|índice|www\.|@|s\.?a\.?|s\.?l\.?|nif|cif|nº|n\.º)",
+        re.I
+    )
+    _DATE_RE = re.compile(r"\d{2}/\d{2}/\d{4}")
+    
+    candidatas = []
+    for linea in lineas[:80]:  # Buscar en las primeras 80 líneas
+        if len(linea) < 40:
             continue
-        if any(kw in linea_lower for kw in keywords_resumen):
-            # Preferir líneas al principio del documento
-            peso = max(0, 100 - i)
-            candidatas.append((peso, linea))
+        if _DATE_RE.search(linea):
+            continue
+        if _REJECT_PATTERNS.search(linea):
+            continue
+        if re.match(r"^[\d\s\-\.]+$", linea):
+            continue
+        candidatas.append(linea)
+        if len(candidatas) >= 3:
+            break
     
     if candidatas:
-        candidatas.sort(reverse=True)
-        # Tomar las 2-3 mejores
-        mejores = [c[1] for c in candidatas[:3]]
-        resumen = " ".join(mejores)
-        # Acortar a máximo 3 frases
-        frases = re.split(r'(?<=[.!?])\s+', resumen)
-        resumen = " ".join(frases[:3])
-        return resumen[:500]
+        resumen = " ".join(candidatas)
+        resumen = re.sub(r"\n{2,}", "\n", resumen)
+        resumen = resumen.strip()
+        if len(resumen) > 300:
+            resumen = resumen[:300].rsplit(" ", 1)[0] + "."
+        if len(resumen) >= 30:
+            return sanitize_brands(resumen)
     
-    # Fallback: primeras líneas con sentido
-    for linea in lineas[:20]:
-        if len(linea) > 30 and len(linea) < 400:
-            return linea[:400]
-    
-    return f"Seguro de {producto} con diversas coberturas adaptadas a las necesidades del cliente."
+    # ── Sin resultado útil ───────────────────────────────────────────────
+    return None
 
 
 def _extraer_perfiles(texto: str, producto: str) -> List[str]:
