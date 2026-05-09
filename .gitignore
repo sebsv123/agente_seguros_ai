@@ -13,9 +13,11 @@ ENV/
 node_modules/
 npm-debug.log*
 
-# Data directories
+# Data directories (PDFs comerciales — solo en servidor)
 data/
 data_*/
+docs/productos/**/*.pdf
+*.pdf
 
 # Docker
 .docker/
@@ -24,6 +26,7 @@ data_*/
 *.bak
 *.bak_*
 *.tgz
+*.zip
 
 # Environment variables
 .env
@@ -43,6 +46,13 @@ Thumbs.db
 *.so
 *.dylib
 
-# PDFs comerciales (confidenciales — no subir al repo)
-docs/productos/**/*.pdf
-*.pdf
+# Oracle / Instant Client
+instantclient_*/
+*.jar
+ojdbc*.jar
+
+# Scripts obsoletos de migración
+_add_*.py
+_create_*.py
+_diagnostico_*.py
+_optimize_*.py
