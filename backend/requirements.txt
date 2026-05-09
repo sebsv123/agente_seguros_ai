@@ -14,3 +14,6 @@ apscheduler==3.10.4
 # numpy          # NO INSTALAR: solo necesario con sentence-transformers
 # pytesseract    # NO INSTALAR: OCR local, requiere Tesseract binario
 # Pillow         # NO INSTALAR: solo para OCR
+
+# ====== OCI Object Storage (opcional, solo en Oracle Cloud) ======
+# oci>=2.126.0   # Descomentar si se usa OCI Object Storage
