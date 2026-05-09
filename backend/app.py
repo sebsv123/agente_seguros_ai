@@ -3670,17 +3670,36 @@ def run_followups(request: FastAPIRequest):
 
 
 @app.post("/kb/ingest")
-def kb_ingest(token: str = ""):
-    if KB_ADMIN_TOKEN and token != KB_ADMIN_TOKEN:
-        raise HTTPException(403, "Forbidden")
+async def kb_ingest(request: FastAPIRequest, background_tasks: BackgroundTasks):
+    """
+    Ingesta un PDF o todo el directorio ./data/ en la KB.
+    Body JSON opcional: {"file": "nombre_archivo.pdf", "category": "salud"}
+    Si no se pasa file, procesa todo ./data/
+    Requiere header: X-Admin-Token = KB_ADMIN_TOKEN (si está configurado)
+    """
+    # Auth check
+    if KB_ADMIN_TOKEN:
+        token = request.headers.get("X-Admin-Token", "")
+        if token != KB_ADMIN_TOKEN:
+            raise HTTPException(status_code=403, detail="Forbidden")
 
+    body = {}
     try:
-        from backend.ingest_pdfs import run_ingest  # si ejecutas desde root
+        body = await request.json()
     except Exception:
-        try:
-            from ingest_pdfs import run_ingest  # si ejecutas desde backend/
-        except Exception as e:
-            raise HTTPException(500, f"No se pudo importar ingest_pdfs.py: {e}")
+        pass
 
-    summary = run_ingest(data_dir=Path(KB_DATA_DIR), dsn=DB_DSN, dry_run=False)
-    return {"ok": True, "summary": summary}
+    from backend.kb_ingest import ingest_pdf, ingest_directory
+
+    file_name = body.get("file")
+    category = body.get("category", "salud")
+
+    if file_name:
+        filepath = os.path.join(KB_DATA_DIR, file_name)
+        if not os.path.exists(filepath):
+            raise HTTPException(status_code=404, detail=f"Archivo no encontrado: {file_name}")
+        result = ingest_pdf(filepath, category=category, embedder=embedder, db_dsn=DB_DSN)
+        return {"ok": True, "results": [result]}
+    else:
+        results = ingest_directory(data_dir=KB_DATA_DIR, embedder=embedder, db_dsn=DB_DSN)
+        return {"ok": True, "results": results}
