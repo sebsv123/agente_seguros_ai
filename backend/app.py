@@ -3754,6 +3754,77 @@ def run_followups(request: FastAPIRequest):
         return {"ok": False, "error": str(e)}
 
 
+@app.post("/kb/sync-from-cloud")
+async def kb_sync_from_cloud(request: FastAPIRequest, background_tasks: BackgroundTasks):
+    """
+    Descarga PDFs desde OCI Object Storage → ./data/ → ingesta en pgvector.
+    Protegido con X-Admin-Token.
+    Ejecución en background para no timeout.
+    """
+    if KB_ADMIN_TOKEN:
+        token = request.headers.get("X-Admin-Token", "")
+        if token != KB_ADMIN_TOKEN:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    async def _run():
+        from backend.oci_storage import sync_bucket_to_local
+        from backend.kb_ingest import ingest_directory
+        logger.info("KB_SYNC_CLOUD iniciando...")
+        sync_result = sync_bucket_to_local(local_data_dir=KB_DATA_DIR)
+        logger.info("KB_SYNC_CLOUD descarga: %s", sync_result)
+        ingest_result = ingest_directory(
+            data_dir=KB_DATA_DIR,
+            embedder=embedder,
+            db_dsn=DB_DSN
+        )
+        total_chunks = sum(r.get("chunks_inserted", 0) for r in ingest_result)
+        logger.info("KB_SYNC_CLOUD ingesta: %d chunks nuevos", total_chunks)
+
+    background_tasks.add_task(_run)
+    return {"ok": True, "message": "Sync iniciado en background — revisa /kb/stats en 2-3 minutos"}
+
+
+@app.post("/kb/upload-to-cloud")
+async def kb_upload_to_cloud(request: FastAPIRequest):
+    """
+    Sube todos los PDFs locales de ./data/ al bucket OCI.
+    Para usar desde el servidor cuando quieras sincronizar al revés.
+    Protegido con X-Admin-Token.
+    """
+    if KB_ADMIN_TOKEN:
+        token = request.headers.get("X-Admin-Token", "")
+        if token != KB_ADMIN_TOKEN:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    from backend.oci_storage import sync_local_to_bucket
+    result = sync_local_to_bucket(local_data_dir=KB_DATA_DIR)
+    return {"ok": True, "result": result}
+
+
+@app.get("/kb/cloud-status")
+async def kb_cloud_status():
+    """
+    Lista los PDFs disponibles en el bucket OCI.
+    Sin autenticación — solo metadata, no contenido.
+    """
+    from backend.oci_storage import list_bucket_objects
+    objects = list_bucket_objects()
+    by_category: dict = {}
+    for obj in objects:
+        if not obj["name"].endswith(".pdf"):
+            continue
+        parts = obj["name"].split("/")
+        cat = parts[0] if len(parts) > 1 else "raiz"
+        by_category.setdefault(cat, []).append(obj["name"].split("/")[-1])
+
+    return {
+        "bucket": os.getenv("OCI_BUCKET_NAME", "agente-rosa-kb"),
+        "total_pdfs": len([o for o in objects if o["name"].endswith(".pdf")]),
+        "by_category": {k: len(v) for k, v in by_category.items()},
+        "files": by_category,
+    }
+
+
 @app.post("/kb/ingest")
 async def kb_ingest(request: FastAPIRequest, background_tasks: BackgroundTasks):
     """
