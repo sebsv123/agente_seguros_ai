@@ -2567,6 +2567,23 @@ def build_playbook_prompt(producto: str) -> str:
         for d in derivar:
             lines.append(f"  - {d}")
     
+    # --- SECCIÓN A: argumentos_clave ---
+    argumentos = pb.get("argumentos_clave", [])
+    if argumentos:
+        lines.append("")
+        lines.append("## Argumentos comerciales")
+        lines.append("Úsalos cuando el cliente pregunte por qué contratar con nosotros o pida que le convenzas:")
+        for a in argumentos:
+            lines.append(f"- {a}")
+    
+    # --- SECCIÓN B: respuestas_objeciones ---
+    respuestas_obj = pb.get("respuestas_objeciones", [])
+    if respuestas_obj:
+        lines.append("")
+        lines.append("## Cómo responder objeciones")
+        for o in respuestas_obj:
+            lines.append(f'Si dicen "{o["objecion"]}": {o["respuesta"]}')
+    
     lines.append("=== FIN INSTRUCCIONES ===")
     return "\n".join(lines)
 
