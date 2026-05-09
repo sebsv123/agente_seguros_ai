@@ -1,34 +1,47 @@
-FROM python:3.12-slim
+FROM python:3.11-slim
+
+# Metadatos
+LABEL maintainer="Valentín Protección Integral"
+LABEL version="2.0.0"
+
+# Variables de build
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
 
-# Evita escribir .pyc y buffers
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# Instalar dependencias del sistema mínimas
+# Dependencias sistema (curl para healthcheck + tesseract para OCR)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    libpq-dev \
     tesseract-ocr \
     tesseract-ocr-spa \
     tesseract-ocr-eng \
+    libgl1 \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar solo requirements primero (caché de Docker)
-COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Dependencias Python (capa separada para cache de Docker)
+COPY requirements.txt .
+RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Copiar el código
+# Código fuente
 COPY backend/ ./backend/
 COPY dashboard/ ./dashboard/
 
-# Puerto
+# Directorio de datos y logs (se montan como volúmenes)
+RUN mkdir -p /app/data /app/logs
+
+# Usuario no-root (seguridad)
+RUN useradd -m -u 1000 rosa && chown -R rosa:rosa /app
+USER rosa
+
 EXPOSE 8000
 
-# Healthcheck
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+# Healthcheck interno del contenedor
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
-# Arrancar con uvicorn
-CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--workers", "1", "--log-level", "info", "--access-log"]

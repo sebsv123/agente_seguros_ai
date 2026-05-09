@@ -1,4 +1,12 @@
+tunnel: <ID_DEL_TUNNEL_EXISTENTE>
+credentials-file: /etc/cloudflared/credentials.json
+
 ingress:
   - hostname: n8n.valentinproteccionintegral.com
     service: http://n8n:5678
+  - hostname: agente.valentinproteccionintegral.com
+    service: http://backend:8000
+    originRequest:
+      connectTimeout: 30s
+      noTLSVerify: false
   - service: http_status:404

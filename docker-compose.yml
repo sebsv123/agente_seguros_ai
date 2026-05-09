@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+
   db:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
@@ -8,39 +9,65 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-agente}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agente_pw}
       POSTGRES_DB: ${POSTGRES_DB:-agente_ai}
-    # Puerto expuesto en la red privada del servidor Linux
-    # Windows se conecta a LINUX_PRIVATE_IP:5432
-    # Firewall en Linux restringe acceso solo a IP de Windows
     ports:
-      - "${PG_PORT:-5432}:5432"
+      - "127.0.0.1:5432:5432"   # Solo localhost — nunca expuesto al exterior
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./backend/rag/setup_db.sql:/docker-entrypoint-initdb.d/01-setup.sql
-      - ./backend/rag/setup_pg_hba.sql:/docker-entrypoint-initdb.d/02-pg_hba.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agente} -d ${POSTGRES_DB:-agente_ai}"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   backend:
     build: .
     restart: unless-stopped
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - "127.0.0.1:8000:8000"   # Solo localhost — Cloudflare Tunnel conecta aquí
     env_file:
       - .env
     environment:
       DB_DSN: postgresql://${POSTGRES_USER:-agente}:${POSTGRES_PASSWORD:-agente_pw}@db:5432/${POSTGRES_DB:-agente_ai}
+      APP_ENV: ${APP_ENV:-production}
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - ./data:/app/data:ro        # PDFs de KB (read-only)
+      - ./logs:/app/logs           # Logs persistentes
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./cloudflared:/etc/cloudflared:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
 
 volumes:
   pgdata:
+    driver: local

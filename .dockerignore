@@ -1,44 +1,46 @@
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-.venv/
-env/
-venv/
-
-# Git
-.git/
-.gitignore
-
-# Data (no copiar datos locales al contenedor)
-data/
-data_*/
-backups/
-n8n_extracted/
-backup_linux/
-
-# PDFs comerciales
-docs/productos/**/*.pdf
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
 
 # Entorno
 .env
-.env.example
+.env.*
+!.env.example
+venv/
+.venv/
+env/
+
+# Datos sensibles (nunca en imagen Docker)
+data/
+*.pdf
+*.zip
+*.tar.gz
+
+# Desarrollo
+.git/
+.gitignore
+*.md
+docs/
+scripts/
+tests/
+archive/
+backups/
+backup_linux/
+n8n_extracted/
+recovered_workflows/
+dashboard/    # Se sirve por FastAPI, no necesita estar en la imagen
 
 # IDE
 .vscode/
 .idea/
+*.swp
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Scripts de desarrollo
-_add_*.py
-_create_*.py
-
-# ML models (no caben en el contenedor)
-*.bin
-*.gguf
-*.pt
-*.pth
-*.onnx
+# Logs
+logs/
+*.log
