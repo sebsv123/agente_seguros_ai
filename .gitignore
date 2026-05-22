@@ -22,14 +22,42 @@ docs/productos/**/*.pdf
 # Docker
 .docker/
 
-# Backup files
+# =============================
+# SECURITY — NEVER COMMIT THESE
+# =============================
+
+# Backup files & archives
 *.bak
 *.bak_*
 *.tgz
+*.tar.gz
 *.zip
+*.gz
+backups/
+backup*/
+
+# Database dumps & files
+*.sql
+*.sqlite
+*.sqlite3
+*.db
+
+# Cloudflare credentials (NEVER commit real tunnel IDs/tokens)
+cloudflared/creds.json
+cloudflared/*.json
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
 
 # Environment variables
 .env
+.env.*
+!.env.example
+
+# n8n data
+n8n_data/
+*.n8n
 
 # IDEs
 .vscode/
@@ -43,7 +71,6 @@ Thumbs.db
 
 # Large ML libraries
 *.dll
-*.so
 *.dylib
 
 # Oracle / Instant Client
