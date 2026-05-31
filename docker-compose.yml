@@ -29,11 +29,12 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8080:8000"
     env_file: .env
     environment:
       DB_DSN: postgresql://${POSTGRES_USER:-agente}:${POSTGRES_PASSWORD:-agente_pw}@db:5432/${POSTGRES_DB:-agente_ai}
       APP_ENV: ${APP_ENV:-production}
+      PYTHONPATH: /app/backend
     depends_on:
       db:
         condition: service_healthy
