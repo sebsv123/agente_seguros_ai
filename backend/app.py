@@ -201,6 +201,75 @@ META_BLOCKED_TTL_S       = 3600
 FOLLOWUP_DELAY_HOURS     = 48
 FOLLOWUP_MAX_ATTEMPTS    = 2
 
+# ── Mensajes de bienvenida y cierre ────────────────────
+WELCOME_MESSAGE = """Hola 👋 Gracias por escribir a *Valentín Protección Integral*.
+
+En breves momentos te atendemos personalmente. Mientras tanto, cuéntanos qué necesitas para preparar tu caso desde ya 👇
+
+¿Para qué tipo de seguro te podemos ayudar?
+
+🏥 *Salud* — particulares, autónomos o empresas
+🌍 *Visados y extranjería* — NIE, TIE, residencia
+🎓 *Estudiantes*
+🦷 *Dental*
+⚡ *Accidentes*
+🐾 *Mascotas*
+
+Solo dinos cuál y empezamos 🙏"""
+
+WELCOME_MESSAGE_EN = """Hi 👋 Thank you for contacting *Valentín Protección Integral*.
+
+We'll be with you personally very shortly. In the meantime, tell us what you need so we can prepare your case right away 👇
+
+What type of insurance are you looking for?
+
+🏥 *Health* — individuals, self-employed or businesses
+🌍 *Visa & immigration* — NIE, TIE, residence permit
+🎓 *Students*
+🦷 *Dental*
+⚡ *Accidents*
+🐾 *Pets*
+
+Just tell us which one and we'll get started 🙏"""
+
+HANDOFF_MESSAGE_ES = """Perfecto, ya tengo todo lo necesario 🙌
+
+Rosa o Sebastián te contactan personalmente en breve para darte las opciones exactas para tu caso.
+
+¡Hasta ahora! 😊"""
+
+HANDOFF_MESSAGE_EN = """Perfect, I have everything I need 🙌
+
+Rosa or Sebastián will contact you personally shortly to give you the exact options for your case.
+
+Talk soon! 😊"""
+
+# ── Flujos de steps por perfil ──────────────────────────
+STEPS_GENERAL = [
+    "product_interest",
+    "ask_coverage_type",
+    "ask_name",
+    "ask_birth_date",
+    "ask_province",
+    "ask_email",
+    "handoff",
+]
+
+STEPS_EXTRANJERIA = [
+    "product_interest",
+    "ask_purpose",
+    "ask_name",
+    "ask_birth_date",
+    "ask_num_people",
+    "ask_email",
+    "ask_address",
+    "ask_passport",
+    "handoff",
+]
+
+MAX_AGENT_TURNS_GENERAL     = 5
+MAX_AGENT_TURNS_EXTRANJERIA = 7
+
 # Google Calendar (opcional)
 GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "")
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
@@ -440,6 +509,18 @@ def bootstrap_schema() -> None:
                 cur.execute("ALTER TABLE lead_state ADD COLUMN IF NOT EXISTS human_released BOOLEAN DEFAULT FALSE")
             except Exception:
                 pass
+            # Migration: nuevos campos de perfil (v2)
+            try:
+                cur.execute("ALTER TABLE lead_profile ADD COLUMN IF NOT EXISTS email TEXT")
+                cur.execute("ALTER TABLE lead_profile ADD COLUMN IF NOT EXISTS fecha_nacimiento_completa TEXT")
+                cur.execute("ALTER TABLE lead_profile ADD COLUMN IF NOT EXISTS direccion_espana TEXT")
+                cur.execute("ALTER TABLE lead_profile ADD COLUMN IF NOT EXISTS codigo_postal_espana TEXT")
+                cur.execute("ALTER TABLE lead_profile ADD COLUMN IF NOT EXISTS num_pasaporte TEXT")
+                cur.execute("ALTER TABLE lead_profile ADD COLUMN IF NOT EXISTS fecha_vencimiento_pasaporte TEXT")
+                cur.execute("ALTER TABLE lead_profile ADD COLUMN IF NOT EXISTS foto_pasaporte_recibida BOOLEAN DEFAULT FALSE")
+                cur.execute("ALTER TABLE lead_profile ADD COLUMN IF NOT EXISTS perfil_extranjeria BOOLEAN DEFAULT FALSE")
+            except Exception:
+                pass
         conn.commit()
 
     logger.info("Schema bootstrap OK (incl. KB)")
@@ -591,6 +672,14 @@ LEAD_STATE_DEFAULT = {
         "codigo_postal": None,
         "num_asegurados": None,
         "tiene_preexistencias": None,
+        "email": None,
+        "fecha_nacimiento_completa": None,
+        "direccion_espana": None,
+        "codigo_postal_espana": None,
+        "num_pasaporte": None,
+        "fecha_vencimiento_pasaporte": None,
+        "foto_pasaporte_recibida": False,
+        "perfil_extranjeria": False,
     },
     "mensajes_intercambiados": 0,
     "ultimo_mensaje": None,
@@ -710,34 +799,50 @@ def _notify_human_handoff(lead_id: str, ls: dict, ultimo_texto: str, sender_id: 
     slots = load_state(lead_id).get("slots", {})
     datos = ls.get("datos_recogidos", {})
     temp_tag = ls.get("temp_tag", "no evaluado")
-    
-    nombre = slots.get("name") or datos.get("nombre") or "no indicado"
+
+    nombre   = slots.get("name") or datos.get("nombre") or "no indicado"
+    email    = slots.get("email") or datos.get("email") or "no indicado"
     producto = ls.get("producto_detectado") or slots.get("product_interest") or "no detectado"
     provincia = slots.get("province") or datos.get("codigo_postal") or "no indicada"
     num_people = slots.get("num_people") or datos.get("num_asegurados") or "no indicado"
-    ages = slots.get("ages") or datos.get("edad") or "no indicadas"
-    copay = slots.get("copay_preference") or "no indicado"
+    ages = slots.get("ages") or datos.get("fecha_nacimiento_completa") or datos.get("edad") or "no indicadas"
     preex = slots.get("has_preexisting")
     preex_str = "sí" if preex is True else ("no" if preex is False else "no indicado")
     turnos = ls.get("mensajes_intercambiados", 0)
-    
+    es_extranjeria = bool(slots.get("perfil_extranjeria") or datos.get("perfil_extranjeria"))
+
     mensaje = (
-        f"🔔 LEAD LISTO — Valentín Protección Integral\n\n"
+        f"🔔 *LEAD LISTO — Valentín Protección Integral*\n\n"
         f"👤 Nombre: {nombre}\n"
+        f"📱 Teléfono: wa.me/{sender_id}\n"
+        f"📧 Email: {email}\n"
         f"📦 Producto: {producto}\n"
         f"🌡️ Score: {temp_tag}\n"
         f"📍 Zona: {provincia}\n"
         f"👥 Personas: {num_people}\n"
-        f"🎂 Edades: {ages}\n"
-        f"💶 Copago: {copay}\n"
+        f"🎂 Fechas de nacimiento: {ages}\n"
         f"🩺 Preexistencias: {preex_str}\n"
-        f"💬 Último mensaje: \"{ultimo_texto[:120]}\"\n"
-        f"📊 Turnos: {turnos}\n\n"
-        f"👉 Responder: wa.me/{sender_id}"
     )
-    
+
+    if es_extranjeria:
+        direccion = datos.get("direccion_espana") or slots.get("direccion_espana") or "no indicada"
+        pasaporte = datos.get("num_pasaporte") or slots.get("num_pasaporte") or "no indicado"
+        vencimiento = datos.get("fecha_vencimiento_pasaporte") or slots.get("fecha_vencimiento_pasaporte") or "no indicada"
+        foto_ok = bool(datos.get("foto_pasaporte_recibida") or slots.get("foto_pasaporte_recibida"))
+        mensaje += (
+            f"\n🏠 Dirección en España: {direccion}\n"
+            f"🛂 Pasaporte: {pasaporte} | Vence: {vencimiento}\n"
+            f"📎 Foto pasaporte: {'Sí ✅' if foto_ok else 'No ❌'}\n"
+        )
+
+    mensaje += (
+        f"\n💬 Último mensaje: \"{ultimo_texto[:120]}\"\n"
+        f"📊 Turnos: {turnos}\n\n"
+        f"👉 Abrir chat: wa.me/{sender_id}"
+    )
+
     logger.info("HANDOFF_NOTIFY lead=%s\n%s", lead_id, mensaje)
-    
+
     try:
         _meta_send_wa(DEFAULT_WA_PHONE_E164, mensaje)
         logger.info("HANDOFF_NOTIFIED lead=%s to=%s", lead_id, DEFAULT_WA_PHONE_E164)
@@ -784,6 +889,14 @@ def update_lead_state_from_message(lead_id: str, text: str, sender_id: str, stat
             ls = advance_lead_phase(lead_id, ls, "listo_para_humano", "Datos mínimos completos")
             ls["derivado_a_humano"] = True
             _notify_human_handoff(lead_id, ls, text, sender_id)
+            # Mensaje de cierre al cliente
+            _lang = state.get("slots", {}).get("lang", "es") if state else "es"
+            _handoff_msg = HANDOFF_MESSAGE_EN if _lang == "en" else HANDOFF_MESSAGE_ES
+            log_event(lead_id, "ig", "out", _handoff_msg, intent="handoff_client_msg")
+            try:
+                _meta_send_wa(sender_id, _handoff_msg)
+            except Exception:
+                pass
             # Evaluar conversación al derivar
             try:
                 from backend.agent_evaluator import evaluate_conversation
@@ -830,12 +943,19 @@ def check_lead_expiry(lead_id: str, ls: dict) -> Optional[dict]:
 
 def update_profile_from_slots(lead_id: str, slots: dict) -> None:
     FIELD_MAP: dict[str, tuple] = {
-        "province":            ("province",            lambda v: str(v),        False),
-        "num_people":          ("num_insured",         lambda v: int(v),         False),
-        "ages":                ("ages",                lambda v: json.dumps(v),  True),
-        "copay_preference":    ("copay_preference",    lambda v: str(v),         False),
-        "has_preexisting":     ("has_preexisting",     lambda v: bool(v),        False),
-        "preexisting_details": ("preexisting_details", lambda v: str(v),         False),
+        "province":                    ("province",                    lambda v: str(v),        False),
+        "num_people":                  ("num_insured",                 lambda v: int(v),        False),
+        "ages":                        ("ages",                        lambda v: json.dumps(v), True),
+        "has_preexisting":             ("has_preexisting",             lambda v: bool(v),       False),
+        "preexisting_details":         ("preexisting_details",         lambda v: str(v),        False),
+        "email":                       ("email",                       lambda v: str(v),        False),
+        "fecha_nacimiento_completa":   ("fecha_nacimiento_completa",   lambda v: str(v),        False),
+        "direccion_espana":            ("direccion_espana",            lambda v: str(v),        False),
+        "codigo_postal_espana":        ("codigo_postal_espana",        lambda v: str(v),        False),
+        "num_pasaporte":               ("num_pasaporte",               lambda v: str(v),        False),
+        "fecha_vencimiento_pasaporte": ("fecha_vencimiento_pasaporte", lambda v: str(v),        False),
+        "foto_pasaporte_recibida":     ("foto_pasaporte_recibida",     lambda v: bool(v),       False),
+        "perfil_extranjeria":          ("perfil_extranjeria",          lambda v: bool(v),       False),
     }
     updates: list[tuple[str, Any, bool]] = []
     for slot_key, (col, coerce, is_json) in FIELD_MAP.items():
@@ -905,10 +1025,6 @@ _VIDA_QUESTIONS: Dict[str, str] = {
         "Ej: fallecimiento, invalidez, enfermedades graves...\n"
         "Si no estás seguro, escribe 'estándar'."
     ),
-    "copay_preference": (
-        "¿Prefieres una prima más baja con menos capital o una prima más alta con más protección? 💶\n"
-        "Responde: 'básica', 'completa' o 'indiferente'."
-    ),
     "has_preexisting": (
         "¿Hay alguna enfermedad previa o condición médica relevante? 🩺\n"
         "(sí / no)"
@@ -924,10 +1040,6 @@ _HOGAR_QUESTIONS: Dict[str, str] = {
         "¿Qué coberturas son más importantes para ti? 🏠\n"
         "Ej: incendio, robo, daños por agua, responsabilidad civil...\n"
         "Si no estás seguro, escribe 'estándar'."
-    ),
-    "copay_preference": (
-        "¿Prefieres una franquicia (pago mínimo por siniestro) o todo incluido? 💶\n"
-        "Responde: 'con franquicia', 'todo incluido' o 'indiferente'."
     ),
     "has_preexisting": (
         "¿Ha habido algún siniestro previo en la vivienda? 🏠\n"
@@ -1022,16 +1134,6 @@ SLOT_FLOW: List[Dict[str, Any]] = [
             "¿Alguna cobertura específica importante para ti? 🩺\n"
             "Ej: hospitalización, urgencias en el extranjero, reembolso...\n"
             "Si no tienes preferencia, escribe 'estándar'."
-        ),
-    },
-    {
-        "key": "copay_preference",
-        "required": True,
-        "wa_required": False,
-        "question": (
-            "¿Prefieres sin copago (cuota fija), con copago (cuota más baja + pequeño pago por uso) "
-            "o te da igual? 💶\n"
-            "Responde: 'sin copago', 'con copago' o 'indiferente'."
         ),
     },
     {
@@ -2278,9 +2380,69 @@ def _random_storytelling(ab_version: str = "A") -> str:
         return random.choice(_STORYTELLING_HINTS_B)
     return random.choice(_STORYTELLING_HINTS)
 
+def _is_new_conversation(lead_id: str) -> bool:
+    """
+    REGLA ABSOLUTA — Prioridad 0.
+    True únicamente si:
+      A) Cero mensajes outbound previos en conversations para este lead_id
+      B) human_released = FALSE en lead_state
+    """
+    try:
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM conversations "
+                    "WHERE lead_id = %s AND direction = 'out'",
+                    (lead_id,),
+                )
+                count = cur.fetchone()[0]
+                if count > 0:
+                    return False
+                cur.execute(
+                    "SELECT human_released FROM lead_state WHERE lead_id = %s",
+                    (lead_id,),
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    return False
+    except Exception as e:
+        logger.warning("IS_NEW_CONVERSATION_ERR lead=%s err=%s", lead_id, e)
+        return False
+    return True
+
+
+def _is_extranjeria_profile(text: str, slots: dict) -> bool:
+    """
+    Detecta si el lead tiene perfil de extranjería/visado.
+    Busca keywords en el texto y en los slots actuales.
+    """
+    _KEYWORDS = {
+        "visado", "visa", "nie", "tie", "residencia", "extranjero", "extranjera",
+        "pasaporte", "passport", "consulado", "consulate", "student visa",
+        "permiso de residencia", "tarjeta de residencia", "extranjeria", "extranjería",
+    }
+    text_lower = (text or "").lower()
+    for kw in _KEYWORDS:
+        if kw in text_lower:
+            return True
+    for v in slots.values():
+        if isinstance(v, str):
+            v_lower = v.lower()
+            for kw in _KEYWORDS:
+                if kw in v_lower:
+                    return True
+    return False
+
+
 def process_message(lead_id: str, text: str, sender_id: str, source: str = "ig") -> str:
     channel = channel_from_source(source)
     text = (text or "").strip()
+
+    # ══ REGLA ABSOLUTA — PRIORIDAD 0 ══════════════════════
+    # El agente SOLO interviene en conversaciones NUEVAS.
+    # Comprobación ANTES de cualquier otra lógica.
+    if not _is_new_conversation(lead_id):
+        return ""
 
     # Anti-spam
     if sender_id and _is_rate_limited(sender_id):
@@ -2315,6 +2477,53 @@ def process_message(lead_id: str, text: str, sender_id: str, source: str = "ig")
 
     filled_for_log = [k for k, v in filled_slots.items() if v is not None and k in LOG_SAFE_SLOTS]
     logger.info("PROCESS lead=%s mode=%s step=%s text=%r | filled=%s", lead_id, mode, state["step"], text[:80], filled_for_log)
+
+    # ── WELCOME MESSAGE ────────────────────────────────────
+    # Se envía UNA SOLA VEZ: cuando es el primer mensaje inbound del lead.
+    try:
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM conversations WHERE lead_id = %s AND direction = 'in'",
+                    (lead_id,),
+                )
+                count_in = cur.fetchone()[0]
+    except Exception:
+        count_in = 1  # safe default: si falla, asumimos primer mensaje
+    if count_in == 1:
+        lang = detect_language(text)
+        welcome = WELCOME_MESSAGE_EN if lang == "en" else WELCOME_MESSAGE
+        log_event(lead_id, channel, "out", welcome, intent="welcome")
+        save_state(lead_id, state)
+        return welcome
+
+    # ── DETECCIÓN DE PERFIL EXTRANJERÍA ───────────────────
+    if not filled_slots.get("perfil_extranjeria"):
+        if _is_extranjeria_profile(text, filled_slots):
+            filled_slots["perfil_extranjeria"] = True
+            state["slots"] = filled_slots
+            update_profile_from_slots(lead_id, {"perfil_extranjeria": True})
+            ls_data = ls.get("datos_recogidos", {})
+            ls_data["perfil_extranjeria"] = True
+            ls["datos_recogidos"] = ls_data
+            logger.info("EXTRANJERIA_DETECTED lead=%s", lead_id)
+
+    # ── MAX_AGENT_TURNS ────────────────────────────────────
+    _es_extranjeria = bool(filled_slots.get("perfil_extranjeria"))
+    _max_turns = MAX_AGENT_TURNS_EXTRANJERIA if _es_extranjeria else MAX_AGENT_TURNS_GENERAL
+    _agent_turns = ls.get("mensajes_intercambiados", 0)
+    if _agent_turns >= _max_turns and ls.get("fase") not in ("listo_para_humano", "cerrado"):
+        _msg_max = (
+            "Para darte la mejor atención, prefiero que Rosa te llame directamente y te lo "
+            "dejamos claro en 2 minutos. ¿Cuándo te viene bien? 🙏"
+        )
+        ls = advance_lead_phase(lead_id, ls, "listo_para_humano", f"Max turnos ({_max_turns}) alcanzados")
+        ls["derivado_a_humano"] = True
+        save_lead_state(lead_id, ls)
+        _notify_human_handoff(lead_id, ls, text, sender_id)
+        log_event(lead_id, channel, "out", _msg_max, intent="max_turns_handoff")
+        save_state(lead_id, state)
+        return _msg_max
 
     # Reset
     if is_reset_request(text):
@@ -2513,10 +2722,6 @@ def process_message(lead_id: str, text: str, sender_id: str, source: str = "ig")
         "ages": [
             "Perfecto, así lo ajusto bien. ",
             "Esto es clave, porque la edad influye mucho en el precio. ",
-        ],
-        "copay_preference": [
-            "Vale. Esto ayuda mucho a elegir la opción correcta. ",
-            f"{_random_storytelling(ab_version=state.get('ab_version', 'A'))} ",
         ],
         "budget": [
             "Entendido. Con esto te preparo una propuesta muy alineada. ",

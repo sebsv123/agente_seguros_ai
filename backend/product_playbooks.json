@@ -58,11 +58,11 @@
         "Autónomos sin acceso a mutua"
       ],
       "preguntas_iniciales": [
-        "¿Para quién buscas el seguro? ¿Para ti, para tu familia o para un familiar mayor?",
-        "¿Tienes alguna enfermedad o condición preexistente que debamos tener en cuenta?",
-        "¿Prefieres un seguro con copagos (más barato) o sin copagos (más completo)?",
-        "¿Necesitas cobertura dental incluida o solo médico?",
-        "¿Qué tipo de especialista sueles visitar con más frecuencia?"
+        "¿Para quién buscas el seguro? ¿Para ti solo, para tu pareja o para toda la familia?",
+        "¿Cuál es tu nombre completo?",
+        "¿Cuál es tu fecha de nacimiento? (día, mes y año)",
+        "¿En qué provincia de España estás?",
+        "¿Cuál es tu correo electrónico?"
       ],
       "datos_minimos": [
         "Edad del asegurado",
@@ -136,10 +136,13 @@
         "Estudiantes internacionales"
       ],
       "preguntas_iniciales": [
-        "¿Cuál es tu país de origen y cuánto tiempo llevas en España?",
-        "¿Tienes tarjeta sanitaria europea o acceso a la sanidad pública?",
-        "¿Necesitas el seguro para trámites de residencia o por tranquilidad personal?",
-        "¿Prefieres atención en español, inglés u otro idioma?"
+        "¿Para qué necesitas exactamente el seguro? (visado, NIE, TIE, residencia, estudios...)",
+        "¿Cuál es tu nombre completo?",
+        "¿Cuál es tu fecha de nacimiento? (día, mes y año)",
+        "¿Cuántas personas necesitan el seguro?",
+        "¿Cuál es tu correo electrónico?",
+        "¿Cuál es la dirección completa en España donde vas a residir, incluyendo código postal?",
+        "¿Prefieres enviarme una foto del pasaporte o me das el número y la fecha de vencimiento?"
       ],
       "datos_minimos": [
         "Nacionalidad",
