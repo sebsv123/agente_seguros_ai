@@ -620,7 +620,7 @@ def save_state(lead_id: str, state: dict) -> None:
                 INSERT INTO conversation_state
                     (lead_id, step, slots, last_question,
                      ig_user_id, channel, source, wa_sent_at,
-                     mode, non_insurance_turns, updated_at)
+                     mode, non_insurance_turns, ab_version, updated_at)
                 VALUES (%s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, now())
                 ON CONFLICT (lead_id) DO UPDATE SET
                     step = EXCLUDED.step,
@@ -2490,14 +2490,8 @@ def process_message(lead_id: str, text: str, sender_id: str, source: str = "ig")
                 count_in = cur.fetchone()[0]
     except Exception:
         count_in = 1  # safe default: si falla, asumimos primer mensaje
-    if count_in == 1:
-        lang = detect_language(text)
-        welcome = WELCOME_MESSAGE_EN if lang == "en" else WELCOME_MESSAGE
-        log_event(lead_id, channel, "out", welcome, intent="welcome")
-        save_state(lead_id, state)
-        return welcome
-
     # ── DETECCIÓN DE PERFIL EXTRANJERÍA ───────────────────
+    # Se hace ANTES del welcome para que quede guardado desde el primer mensaje
     if not filled_slots.get("perfil_extranjeria"):
         if _is_extranjeria_profile(text, filled_slots):
             filled_slots["perfil_extranjeria"] = True
@@ -2506,7 +2500,15 @@ def process_message(lead_id: str, text: str, sender_id: str, source: str = "ig")
             ls_data = ls.get("datos_recogidos", {})
             ls_data["perfil_extranjeria"] = True
             ls["datos_recogidos"] = ls_data
+            save_lead_state(lead_id, ls)
             logger.info("EXTRANJERIA_DETECTED lead=%s", lead_id)
+
+    if count_in == 1:
+        lang = detect_language(text)
+        welcome = WELCOME_MESSAGE_EN if lang == "en" else WELCOME_MESSAGE
+        log_event(lead_id, channel, "out", welcome, intent="welcome")
+        save_state(lead_id, state)
+        return welcome
 
     # ── MAX_AGENT_TURNS ────────────────────────────────────
     _es_extranjeria = bool(filled_slots.get("perfil_extranjeria"))
